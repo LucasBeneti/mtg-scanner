@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getCardImageUrl } from '../services/scryfall';
 import type { ScryfallCard } from '../types/card';
 
@@ -40,6 +41,7 @@ export function CardResultSheet({
   fromCache,
   onClose,
 }: CardResultSheetProps) {
+  const insets = useSafeAreaInsets();
   const [selectedFinish, setSelectedFinish] = useState<FinishOption>('normal');
 
   useEffect(() => {
@@ -97,10 +99,18 @@ export function CardResultSheet({
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
-        <View style={styles.sheet}>
+        <View
+          style={[
+            styles.sheet,
+            { paddingBottom: Math.max(insets.bottom, 12) + 16 },
+          ]}
+        >
           <View style={styles.handle} />
 
-          <ScrollView showsVerticalScrollIndicator={false}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContent}
+          >
             {/* Cabeçalho da carta */}
             <View style={styles.headerRow}>
               {imageUrl ? (
@@ -238,10 +248,12 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 28,
     maxHeight: '86%',
     borderTopWidth: 1,
     borderColor: '#334155',
+  },
+  scrollContent: {
+    paddingBottom: 8,
   },
   handle: {
     width: 42,

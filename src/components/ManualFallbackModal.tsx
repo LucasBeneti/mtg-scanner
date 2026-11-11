@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { parseManualInput } from '../services/collectorParser';
 import type { ParsedCollectorInfo } from '../types/card';
 
@@ -25,6 +26,7 @@ export function ManualFallbackModal({
   onClose,
   onSubmit,
 }: ManualFallbackModalProps) {
+  const insets = useSafeAreaInsets();
   const [inputValue, setInputValue] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -49,7 +51,13 @@ export function ManualFallbackModal({
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
-        style={styles.backdrop}
+        style={[
+          styles.backdrop,
+          {
+            paddingTop: Math.max(insets.top, 16) + 8,
+            paddingBottom: Math.max(insets.bottom, 16) + 8,
+          },
+        ]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={styles.card}>
@@ -107,7 +115,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.72)',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
+    paddingHorizontal: 20,
   },
   card: {
     width: '100%',
