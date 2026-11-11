@@ -4,7 +4,14 @@ import TextRecognition, {
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import {
   Camera,
   useCameraPermission,
@@ -15,6 +22,11 @@ import {
   computeCollectorCropRect,
 } from './src/components/CameraOverlay';
 import { parseCollectorOcrText } from './src/services/collectorParser';
+import {
+  fetchCardBySetAndNumber,
+  type FetchCardResult,
+  ScryfallError,
+} from './src/services/scryfall';
 import type { ParsedCollectorInfo } from './src/types/card';
 
 /** Intervalo entre capturas automáticas para o OCR (em ms) */
@@ -52,10 +64,17 @@ export default function App() {
   const [confirmedCardInfo, setConfirmedCardInfo] =
     useState<ParsedCollectorInfo | null>(null);
 
+  const [isFetchingScryfall, setIsFetchingScryfall] = useState(false);
+  const [scryfallResult, setScryfallResult] = useState<FetchCardResult | null>(
+    null,
+  );
+  const [scryfallError, setScryfallError] = useState<string | null>(null);
+
   const isProcessingFrameRef = useRef(false);
   const scanCountRef = useRef(0);
   const lastCandidateKeyRef = useRef<string | null>(null);
   const streakCountRef = useRef(0);
+  const lastQueriedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!hasPermission && canRequestPermission) {
@@ -63,8 +82,46 @@ export default function App() {
     }
   }, [hasPermission, canRequestPermission, requestPermission]);
 
+  const lookupCardInScryfall = useCallback(
+    async (parsed: ParsedCollectorInfo) => {
+      const queryKey = `${parsed.setCode}:${parsed.collectorNumber}`;
+      if (lastQueriedKeyRef.current === queryKey) {
+        return;
+      }
+
+      lastQueriedKeyRef.current = queryKey;
+      setIsFetchingScryfall(true);
+      setScryfallError(null);
+
+      try {
+        const result = await fetchCardBySetAndNumber(
+          parsed.setCode,
+          parsed.collectorNumber,
+        );
+        setScryfallResult(result);
+      } catch (err) {
+        setScryfallResult(null);
+        if (err instanceof ScryfallError) {
+          setScryfallError(err.message);
+        } else {
+          setScryfallError(
+            'Falha de conexão ao consultar a Scryfall. Verifique a internet.',
+          );
+        }
+      } finally {
+        setIsFetchingScryfall(false);
+      }
+    },
+    [],
+  );
+
   const captureAndRecognizeOnce = useCallback(async () => {
-    if (isProcessingFrameRef.current || !isCameraConfigured || isPaused) {
+    if (
+      isProcessingFrameRef.current ||
+      !isCameraConfigured ||
+      isPaused ||
+      isFetchingScryfall
+    ) {
       return;
     }
 
@@ -120,6 +177,8 @@ export default function App() {
 
         if (currentStreak >= REQUIRED_CONFIRMATIONS) {
           setConfirmedCardInfo(parsed);
+          // 5. Fase 4: Consulta Scryfall (ou cache SQLite) ao confirmar 2 leituras seguidas
+          void lookupCardInScryfall(parsed);
         }
       } else {
         lastCandidateKeyRef.current = null;
@@ -154,7 +213,13 @@ export default function App() {
     } finally {
       isProcessingFrameRef.current = false;
     }
-  }, [isCameraConfigured, isPaused, photoOutput]);
+  }, [
+    isCameraConfigured,
+    isPaused,
+    isFetchingScryfall,
+    photoOutput,
+    lookupCardInScryfall,
+  ]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -205,6 +270,15 @@ export default function App() {
       return next;
     });
 
+  const resetLastLookup = () => {
+    lastQueriedKeyRef.current = null;
+    lastCandidateKeyRef.current = null;
+    streakCountRef.current = 0;
+    setConfirmedCardInfo(null);
+    setScryfallResult(null);
+    setScryfallError(null);
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar style='light' />
@@ -235,10 +309,10 @@ export default function App() {
         isConfirmed={isCurrentFrameConfirmed}
       />
 
-      {/* Painel de Debug da Fase 3: Recorte + OCR + Parser SET/NÚMERO + Confirmação */}
+      {/* Painel de Debug da Fase 4: Recorte + OCR + Parser + Resultado Scryfall/SQLite */}
       <View style={styles.debugPanel} pointerEvents='none'>
         <View style={styles.debugHeaderRow}>
-          <Text style={styles.debugBadge}>FASE 3 • PARSER SET + Nº</Text>
+          <Text style={styles.debugBadge}>FASE 4 • SCRYFALL + SQLITE</Text>
           <Text style={styles.debugMeta}>
             {debugSnapshot
               ? `Scan #${debugSnapshot.scanNumber} • ${debugSnapshot.durationMs}ms`
@@ -286,13 +360,61 @@ export default function App() {
           </View>
         </View>
 
-        {confirmedCardInfo ? (
-          <View style={styles.confirmedBanner}>
-            <Text style={styles.confirmedBannerText}>
-              Confirmado (2/2): {confirmedCardInfo.setCode.toUpperCase()} #
-              {confirmedCardInfo.collectorNumber} → pronto p/ Scryfall: /cards/
-              {confirmedCardInfo.setCode}/{confirmedCardInfo.collectorNumber}
+        {/* Status da consulta Scryfall / SQLite */}
+        {isFetchingScryfall ? (
+          <View style={styles.fetchingBanner}>
+            <ActivityIndicator size='small' color='#38BDF8' />
+            <Text style={styles.fetchingBannerText}>
+              Consultando Scryfall ({confirmedCardInfo?.setCode.toUpperCase()} #
+              {confirmedCardInfo?.collectorNumber})...
             </Text>
+          </View>
+        ) : null}
+
+        {scryfallResult ? (
+          <View style={styles.confirmedBanner}>
+            <View style={styles.resultHeaderRow}>
+              <Text style={styles.confirmedCardTitle} numberOfLines={1}>
+                {scryfallResult.card.printed_name ?? scryfallResult.card.name}
+              </Text>
+              <Text
+                style={[
+                  styles.sourceTag,
+                  scryfallResult.fromCache
+                    ? styles.sourceTagCache
+                    : styles.sourceTagApi,
+                ]}
+              >
+                {scryfallResult.fromCache ? 'CACHE SQLITE' : 'API SCRYFALL'}
+              </Text>
+            </View>
+            <Text style={styles.confirmedCardSub}>
+              {scryfallResult.card.set_name} (
+              {scryfallResult.card.set.toUpperCase()} #
+              {scryfallResult.card.collector_number})
+            </Text>
+            <Text style={styles.confirmedPricesText}>
+              Normal:{' '}
+              {scryfallResult.card.prices.usd
+                ? `$${scryfallResult.card.prices.usd}`
+                : '—'}
+              {'  •  '}
+              Foil:{' '}
+              {scryfallResult.card.prices.usd_foil
+                ? `$${scryfallResult.card.prices.usd_foil}`
+                : '—'}
+              {'  •  '}
+              Etched:{' '}
+              {scryfallResult.card.prices.usd_etched
+                ? `$${scryfallResult.card.prices.usd_etched}`
+                : '—'}
+            </Text>
+          </View>
+        ) : null}
+
+        {scryfallError ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{scryfallError}</Text>
           </View>
         ) : null}
       </View>
@@ -313,6 +435,12 @@ export default function App() {
             {torchOn ? 'Lanterna: ON' : 'Lanterna: OFF'}
           </Text>
         </Pressable>
+
+        {scryfallResult || scryfallError ? (
+          <Pressable style={styles.resetButton} onPress={resetLastLookup}>
+            <Text style={styles.resetButtonText}>Limpar / Re-ler</Text>
+          </Pressable>
+        ) : null}
 
         <Pressable
           style={[styles.controlButton, isPaused && styles.controlButtonActive]}
@@ -442,20 +570,85 @@ const styles = StyleSheet.create({
   parsedValueConfirmed: {
     color: '#4ADE80',
   },
-  confirmedBanner: {
+  fetchingBanner: {
     marginTop: 10,
-    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: 8,
-    backgroundColor: 'rgba(74, 222, 128, 0.16)',
+    backgroundColor: 'rgba(56, 189, 248, 0.14)',
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+  },
+  fetchingBannerText: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  confirmedBanner: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(74, 222, 128, 0.14)',
     borderWidth: 1,
     borderColor: '#4ADE80',
   },
-  confirmedBannerText: {
-    color: '#4ADE80',
+  resultHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  confirmedCardTitle: {
+    flex: 1,
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  sourceTag: {
+    fontSize: 10,
+    fontWeight: '800',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  sourceTagApi: {
+    backgroundColor: '#38BDF8',
+    color: '#0F172A',
+  },
+  sourceTagCache: {
+    backgroundColor: '#4ADE80',
+    color: '#0F172A',
+  },
+  confirmedCardSub: {
+    color: '#94A3B8',
     fontSize: 11,
+    marginTop: 2,
+  },
+  confirmedPricesText: {
+    color: '#4ADE80',
+    fontSize: 12,
     fontWeight: '800',
     fontFamily: 'monospace',
+    marginTop: 4,
+  },
+  errorBanner: {
+    marginTop: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(248, 113, 113, 0.16)',
+    borderWidth: 1,
+    borderColor: '#F87171',
+  },
+  errorBannerText: {
+    color: '#F87171',
+    fontSize: 12,
+    fontWeight: '700',
   },
   bottomBar: {
     position: 'absolute',
@@ -464,10 +657,10 @@ const styles = StyleSheet.create({
     right: 16,
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 12,
+    gap: 10,
   },
   controlButton: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
     paddingVertical: 13,
     borderRadius: 12,
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
@@ -485,5 +678,16 @@ const styles = StyleSheet.create({
   },
   controlButtonTextActive: {
     color: '#0F172A',
+  },
+  resetButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: '#38BDF8',
+  },
+  resetButtonText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
