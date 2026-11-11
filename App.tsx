@@ -14,9 +14,13 @@ import {
   CameraOverlay,
   computeCollectorCropRect,
 } from './src/components/CameraOverlay';
+import { parseCollectorOcrText } from './src/services/collectorParser';
+import type { ParsedCollectorInfo } from './src/types/card';
 
 /** Intervalo entre capturas automáticas para o OCR (em ms) */
 const SCAN_INTERVAL_MS = 650;
+/** Leituras consecutivas iguais exigidas para confirmar a carta */
+const REQUIRED_CONFIRMATIONS = 2;
 
 interface OcrDebugSnapshot {
   croppedUri: string;
@@ -24,6 +28,8 @@ interface OcrDebugSnapshot {
   blockCount: number;
   durationMs: number;
   scanNumber: number;
+  parsedCandidate: ParsedCollectorInfo | null;
+  confirmationCount: number;
   errorMessage?: string;
 }
 
@@ -41,9 +47,13 @@ export default function App() {
   const [debugSnapshot, setDebugSnapshot] = useState<OcrDebugSnapshot | null>(
     null
   );
+  const [confirmedCardInfo, setConfirmedCardInfo] =
+    useState<ParsedCollectorInfo | null>(null);
 
   const isProcessingFrameRef = useRef(false);
   const scanCountRef = useRef(0);
+  const lastCandidateKeyRef = useRef<string | null>(null);
+  const streakCountRef = useRef(0);
 
   useEffect(() => {
     if (!hasPermission && canRequestPermission) {
@@ -92,6 +102,28 @@ export default function App() {
         TextRecognitionScript.LATIN
       );
 
+      // 4. Fase 3: Extrai { setCode, collectorNumber } e aplica buffer de confirmação em 2 leituras
+      const parsed = parseCollectorOcrText(ocrResult.text);
+      let currentStreak = 0;
+
+      if (parsed) {
+        const candidateKey = `${parsed.setCode}:${parsed.collectorNumber}`;
+        if (lastCandidateKeyRef.current === candidateKey) {
+          currentStreak = streakCountRef.current + 1;
+        } else {
+          lastCandidateKeyRef.current = candidateKey;
+          currentStreak = 1;
+        }
+        streakCountRef.current = currentStreak;
+
+        if (currentStreak >= REQUIRED_CONFIRMATIONS) {
+          setConfirmedCardInfo(parsed);
+        }
+      } else {
+        lastCandidateKeyRef.current = null;
+        streakCountRef.current = 0;
+      }
+
       scanCountRef.current += 1;
       setDebugSnapshot({
         croppedUri: croppedResult.uri,
@@ -99,6 +131,8 @@ export default function App() {
         blockCount: ocrResult.blocks.length,
         durationMs: Date.now() - startTime,
         scanNumber: scanCountRef.current,
+        parsedCandidate: parsed,
+        confirmationCount: currentStreak,
       });
     } catch (err) {
       scanCountRef.current += 1;
@@ -108,6 +142,8 @@ export default function App() {
         blockCount: 0,
         durationMs: Date.now() - startTime,
         scanNumber: scanCountRef.current,
+        parsedCandidate: null,
+        confirmationCount: 0,
         errorMessage:
           err instanceof Error ? err.message : 'Erro ao capturar/processar frame',
       }));
@@ -139,6 +175,16 @@ export default function App() {
     );
   }
 
+  const activeCandidate = debugSnapshot?.parsedCandidate;
+  const candidateBadgeText = activeCandidate
+    ? `${activeCandidate.setCode.toUpperCase()} #${activeCandidate.collectorNumber} (${Math.min(
+        debugSnapshot.confirmationCount,
+        REQUIRED_CONFIRMATIONS
+      )}/${REQUIRED_CONFIRMATIONS})`
+    : null;
+  const isCurrentFrameConfirmed =
+    (debugSnapshot?.confirmationCount ?? 0) >= REQUIRED_CONFIRMATIONS;
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -153,15 +199,19 @@ export default function App() {
         onConfigured={() => setIsCameraConfigured(true)}
       />
 
-      <CameraOverlay isPaused={isPaused} />
+      <CameraOverlay
+        isPaused={isPaused}
+        candidateBadgeText={candidateBadgeText}
+        isConfirmed={isCurrentFrameConfirmed}
+      />
 
-      {/* Painel de Debug da Fase 2: miniatura do recorte + texto cru do ML Kit */}
+      {/* Painel de Debug da Fase 3: Recorte + OCR + Parser SET/NÚMERO + Confirmação */}
       <View style={styles.debugPanel} pointerEvents="none">
         <View style={styles.debugHeaderRow}>
-          <Text style={styles.debugBadge}>FASE 2 • DEBUG OCR</Text>
+          <Text style={styles.debugBadge}>FASE 3 • PARSER SET + Nº</Text>
           <Text style={styles.debugMeta}>
             {debugSnapshot
-              ? `Scan #${debugSnapshot.scanNumber} • ${debugSnapshot.durationMs}ms • ${debugSnapshot.blockCount} bloco(s)`
+              ? `Scan #${debugSnapshot.scanNumber} • ${debugSnapshot.durationMs}ms`
               : 'Aguardando 1ª captura...'}
           </Text>
         </View>
@@ -180,16 +230,40 @@ export default function App() {
           )}
 
           <View style={styles.ocrTextBox}>
-            <Text style={styles.ocrLabel}>Texto lido pelo ML Kit:</Text>
-            <Text style={styles.ocrRawText} numberOfLines={3}>
+            <Text style={styles.ocrLabel}>OCR cru:</Text>
+            <Text style={styles.ocrRawText} numberOfLines={2}>
               {debugSnapshot?.errorMessage
                 ? `Erro: ${debugSnapshot.errorMessage}`
                 : debugSnapshot?.rawText
-                  ? debugSnapshot.rawText
-                  : '(nenhum texto detectado no recorte)'}
+                  ? debugSnapshot.rawText.replace(/\s+/g, ' ')
+                  : '(nenhum texto detectado)'}
+            </Text>
+
+            <Text style={[styles.ocrLabel, styles.parsedLabel]}>
+              Parser ({debugSnapshot?.confirmationCount ?? 0}/{REQUIRED_CONFIRMATIONS}):
+            </Text>
+            <Text
+              style={[
+                styles.parsedValue,
+                isCurrentFrameConfirmed && styles.parsedValueConfirmed,
+              ]}
+            >
+              {activeCandidate
+                ? `set="${activeCandidate.setCode}" • number="${activeCandidate.collectorNumber}"`
+                : 'Aguardando padrão SET • Nº...'}
             </Text>
           </View>
         </View>
+
+        {confirmedCardInfo ? (
+          <View style={styles.confirmedBanner}>
+            <Text style={styles.confirmedBannerText}>
+              Confirmado (2/2): {confirmedCardInfo.setCode.toUpperCase()} #
+              {confirmedCardInfo.collectorNumber} → pronto p/ Scryfall:{' '}
+              /cards/{confirmedCardInfo.setCode}/{confirmedCardInfo.collectorNumber}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Controles inferiores */}
@@ -298,7 +372,7 @@ const styles = StyleSheet.create({
   },
   cropPreview: {
     width: 110,
-    height: 54,
+    height: 62,
     borderRadius: 6,
     backgroundColor: '#000',
     borderWidth: 1,
@@ -318,12 +392,37 @@ const styles = StyleSheet.create({
   ocrLabel: {
     color: '#94A3B8',
     fontSize: 11,
-    marginBottom: 2,
+  },
+  parsedLabel: {
+    marginTop: 4,
   },
   ocrRawText: {
-    color: '#4ADE80',
-    fontSize: 13,
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontFamily: 'monospace',
+  },
+  parsedValue: {
+    color: '#FACC15',
+    fontSize: 12,
     fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  parsedValueConfirmed: {
+    color: '#4ADE80',
+  },
+  confirmedBanner: {
+    marginTop: 10,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(74, 222, 128, 0.16)',
+    borderWidth: 1,
+    borderColor: '#4ADE80',
+  },
+  confirmedBannerText: {
+    color: '#4ADE80',
+    fontSize: 11,
+    fontWeight: '800',
     fontFamily: 'monospace',
   },
   bottomBar: {

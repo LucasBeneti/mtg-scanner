@@ -49,9 +49,15 @@ export function computeCollectorCropRect(
 
 interface CameraOverlayProps {
   isPaused?: boolean;
+  candidateBadgeText?: string | null;
+  isConfirmed?: boolean;
 }
 
-export function CameraOverlay({ isPaused = false }: CameraOverlayProps) {
+export function CameraOverlay({
+  isPaused = false,
+  candidateBadgeText,
+  isConfirmed = false,
+}: CameraOverlayProps) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   const cardWidth = Math.round(screenWidth * OVERLAY_RATIOS.cardWidthFraction);
@@ -69,7 +75,7 @@ export function CameraOverlay({ isPaused = false }: CameraOverlayProps) {
         <Text style={styles.topHintSubtitle}>
           {isPaused
             ? 'Captura pausada'
-            : 'Alinhe o canto inferior esquerdo na caixa amarela'}
+            : 'Alinhe o canto inferior esquerdo na caixa destacada'}
         </Text>
       </View>
 
@@ -81,9 +87,21 @@ export function CameraOverlay({ isPaused = false }: CameraOverlayProps) {
         <View style={[styles.corner, styles.cornerBR]} />
 
         {/* Sub-caixa demarcando onde fica o SET • NÚMERO */}
-        <View style={styles.collectorBox}>
-          <View style={styles.collectorBadge}>
-            <Text style={styles.collectorBadgeText}>SET • Nº (ex: FDN • 0125)</Text>
+        <View
+          style={[
+            styles.collectorBox,
+            isConfirmed && styles.collectorBoxConfirmed,
+          ]}
+        >
+          <View
+            style={[
+              styles.collectorBadge,
+              isConfirmed && styles.collectorBadgeConfirmed,
+            ]}
+          >
+            <Text style={styles.collectorBadgeText}>
+              {candidateBadgeText ?? 'SET • Nº (ex: FDN • 0125)'}
+            </Text>
           </View>
         </View>
       </View>
@@ -168,6 +186,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(250, 204, 21, 0.14)',
     borderRadius: 8,
   },
+  collectorBoxConfirmed: {
+    borderColor: '#4ADE80',
+    backgroundColor: 'rgba(74, 222, 128, 0.18)',
+  },
   collectorBadge: {
     position: 'absolute',
     top: -22,
@@ -176,6 +198,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
+  },
+  collectorBadgeConfirmed: {
+    backgroundColor: '#4ADE80',
   },
   collectorBadgeText: {
     color: '#0F172A',
