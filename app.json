@@ -1,15 +1,23 @@
 {
   "expo": {
-    "name": "mtg-scanner",
+    "name": "MTG Scanner",
     "slug": "mtg-scanner",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mtgscanner.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "O MTG Scanner precisa da câmera para ler o código da edição e número da carta."
+      }
     },
     "android": {
+      "package": "com.mtgscanner.app",
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -20,6 +28,9 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-sqlite"
+    ]
   }
 }
