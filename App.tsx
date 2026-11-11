@@ -42,10 +42,12 @@ export default function App() {
   });
 
   const [isCameraConfigured, setIsCameraConfigured] = useState(false);
+  const [isCameraStarted, setIsCameraStarted] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  const [hasToggledTorch, setHasToggledTorch] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [debugSnapshot, setDebugSnapshot] = useState<OcrDebugSnapshot | null>(
-    null
+    null,
   );
   const [confirmedCardInfo, setConfirmedCardInfo] =
     useState<ParsedCollectorInfo | null>(null);
@@ -76,7 +78,7 @@ export default function App() {
           enableShutterSound: false,
           flashMode: 'off',
         },
-        {}
+        {},
       );
 
       const sourceUri = photoFile.filePath.startsWith('file://')
@@ -86,7 +88,7 @@ export default function App() {
       // 2. Recorta apenas a sub-caixa do canto inferior esquerdo da moldura
       const cropRect = computeCollectorCropRect(
         photoFile.width,
-        photoFile.height
+        photoFile.height,
       );
       const manipulatorContext = ImageManipulator.manipulate(sourceUri);
       manipulatorContext.crop(cropRect);
@@ -99,7 +101,7 @@ export default function App() {
       // 3. Executa o OCR on-device (Google ML Kit Latin) apenas no recorte
       const ocrResult = await TextRecognition.recognize(
         croppedResult.uri,
-        TextRecognitionScript.LATIN
+        TextRecognitionScript.LATIN,
       );
 
       // 4. Fase 3: Extrai { setCode, collectorNumber } e aplica buffer de confirmação em 2 leituras
@@ -145,7 +147,9 @@ export default function App() {
         parsedCandidate: null,
         confirmationCount: 0,
         errorMessage:
-          err instanceof Error ? err.message : 'Erro ao capturar/processar frame',
+          err instanceof Error
+            ? err.message
+            : 'Erro ao capturar/processar frame',
       }));
     } finally {
       isProcessingFrameRef.current = false;
@@ -163,8 +167,10 @@ export default function App() {
   if (!hasPermission) {
     return (
       <View style={styles.permissionContainer}>
-        <StatusBar style="light" />
-        <Text style={styles.permissionTitle}>Permissão de Câmera Necessária</Text>
+        <StatusBar style='light' />
+        <Text style={styles.permissionTitle}>
+          Permissão de Câmera Necessária
+        </Text>
         <Text style={styles.permissionDescription}>
           Autorize o acesso à câmera para visualizar o scanner de cartas.
         </Text>
@@ -179,24 +185,48 @@ export default function App() {
   const candidateBadgeText = activeCandidate
     ? `${activeCandidate.setCode.toUpperCase()} #${activeCandidate.collectorNumber} (${Math.min(
         debugSnapshot.confirmationCount,
-        REQUIRED_CONFIRMATIONS
+        REQUIRED_CONFIRMATIONS,
       )}/${REQUIRED_CONFIRMATIONS})`
     : null;
   const isCurrentFrameConfirmed =
     (debugSnapshot?.confirmationCount ?? 0) >= REQUIRED_CONFIRMATIONS;
 
+  const toggleTorch = () => {
+    setHasToggledTorch(true);
+    setTorchOn((v) => !v);
+  };
+
+  const togglePause = () =>
+    setIsPaused((prev) => {
+      const next = !prev;
+      if (next) {
+        setTorchOn(false);
+      }
+      return next;
+    });
+
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar style='light' />
 
       <Camera
         style={StyleSheet.absoluteFill}
-        device="back"
+        device='back'
         isActive={!isPaused}
+        torchMode={
+          isCameraStarted && (torchOn || hasToggledTorch)
+            ? torchOn
+              ? 'on'
+              : 'off'
+            : undefined
+        }
         outputs={[photoOutput]}
-        torchMode={torchOn ? 'on' : 'off'}
         enableNativeTapToFocusGesture={true}
         onConfigured={() => setIsCameraConfigured(true)}
+        onStarted={() => setIsCameraStarted(true)}
+        onPreviewStarted={() => setIsCameraStarted(true)}
+        onStopped={() => setIsCameraStarted(false)}
+        onError={(e) => console.warn('[camera]', e)}
       />
 
       <CameraOverlay
@@ -206,7 +236,7 @@ export default function App() {
       />
 
       {/* Painel de Debug da Fase 3: Recorte + OCR + Parser SET/NÚMERO + Confirmação */}
-      <View style={styles.debugPanel} pointerEvents="none">
+      <View style={styles.debugPanel} pointerEvents='none'>
         <View style={styles.debugHeaderRow}>
           <Text style={styles.debugBadge}>FASE 3 • PARSER SET + Nº</Text>
           <Text style={styles.debugMeta}>
@@ -221,7 +251,7 @@ export default function App() {
             <Image
               source={{ uri: debugSnapshot.croppedUri }}
               style={styles.cropPreview}
-              resizeMode="contain"
+              resizeMode='contain'
             />
           ) : (
             <View style={[styles.cropPreview, styles.cropPlaceholder]}>
@@ -240,7 +270,8 @@ export default function App() {
             </Text>
 
             <Text style={[styles.ocrLabel, styles.parsedLabel]}>
-              Parser ({debugSnapshot?.confirmationCount ?? 0}/{REQUIRED_CONFIRMATIONS}):
+              Parser ({debugSnapshot?.confirmationCount ?? 0}/
+              {REQUIRED_CONFIRMATIONS}):
             </Text>
             <Text
               style={[
@@ -259,8 +290,8 @@ export default function App() {
           <View style={styles.confirmedBanner}>
             <Text style={styles.confirmedBannerText}>
               Confirmado (2/2): {confirmedCardInfo.setCode.toUpperCase()} #
-              {confirmedCardInfo.collectorNumber} → pronto p/ Scryfall:{' '}
-              /cards/{confirmedCardInfo.setCode}/{confirmedCardInfo.collectorNumber}
+              {confirmedCardInfo.collectorNumber} → pronto p/ Scryfall: /cards/
+              {confirmedCardInfo.setCode}/{confirmedCardInfo.collectorNumber}
             </Text>
           </View>
         ) : null}
@@ -270,7 +301,8 @@ export default function App() {
       <View style={styles.bottomBar}>
         <Pressable
           style={[styles.controlButton, torchOn && styles.controlButtonActive]}
-          onPress={() => setTorchOn((v) => !v)}
+          onPress={toggleTorch}
+          disabled={isPaused}
         >
           <Text
             style={[
@@ -284,7 +316,7 @@ export default function App() {
 
         <Pressable
           style={[styles.controlButton, isPaused && styles.controlButtonActive]}
-          onPress={() => setIsPaused((v) => !v)}
+          onPress={togglePause}
         >
           <Text
             style={[
