@@ -1,15 +1,19 @@
+import type { ImageURISource } from 'react-native';
 import type { ScryfallCard } from '../types/card';
 import { getCachedCard, setCachedCard } from './cardCache';
 import { normalizeCollectorNumber } from './collectorParser';
 
 const SCRYFALL_BASE_URL = 'https://api.scryfall.com';
 
+export const SCRYFALL_USER_AGENT =
+  'MTGScannerMobile/0.1 (Expo React Native)';
+
 /**
  * A API da Scryfall exige headers User-Agent e Accept em todas as chamadas.
  * Rate limit oficial: ~2 req/s (mínimo 500ms entre chamadas).
  */
 const SCRYFALL_HEADERS = {
-  'User-Agent': 'MTGScannerMobile/0.1 (Expo React Native)',
+  'User-Agent': SCRYFALL_USER_AGENT,
   Accept: 'application/json',
 };
 
@@ -98,14 +102,21 @@ export async function fetchCardBySetAndNumber(
 }
 
 /**
- * Extrai a melhor URL de imagem da carta (suportando cartas de duas faces).
+ * Monta o source do <Image> já com o User-Agent exigido pelo CDN da Scryfall.
+ * O CDN rejeita UAs padrão de biblioteca (ex: okhttp/4.9.2) com HTTP 400.
  */
-export function getCardImageUrl(card: ScryfallCard): string | null {
-  if (card.image_uris?.normal) {
-    return card.image_uris.normal;
+export function getCardImageSource(card: ScryfallCard): ImageURISource | null {
+  const uri =
+    card.image_uris?.normal ??
+    card.card_faces?.[0]?.image_uris?.normal ??
+    null;
+
+  if (!uri) {
+    return null;
   }
-  if (card.card_faces && card.card_faces.length > 0) {
-    return card.card_faces[0].image_uris?.normal ?? null;
-  }
-  return null;
+
+  return {
+    uri,
+    headers: { 'User-Agent': SCRYFALL_USER_AGENT },
+  };
 }

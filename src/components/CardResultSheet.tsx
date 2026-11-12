@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getCardImageUrl } from '../services/scryfall';
+import { getCardImageSource } from '../services/scryfall';
 import type { ScryfallCard } from '../types/card';
 
 interface CardResultSheetProps {
@@ -43,6 +43,11 @@ export function CardResultSheet({
 }: CardResultSheetProps) {
   const insets = useSafeAreaInsets();
   const [selectedFinish, setSelectedFinish] = useState<FinishOption>('normal');
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [card?.id]);
 
   useEffect(() => {
     if (!card) return;
@@ -84,7 +89,7 @@ export function CardResultSheet({
 
   const activeFinish =
     finishes.find((f) => f.key === selectedFinish) ?? finishes[0];
-  const imageUrl = getCardImageUrl(card);
+  const imageSource = getCardImageSource(card);
   const oracleText =
     card.oracle_text ??
     card.card_faces
@@ -113,11 +118,18 @@ export function CardResultSheet({
           >
             {/* Cabeçalho da carta */}
             <View style={styles.headerRow}>
-              {imageUrl ? (
+              {imageSource && !imageFailed ? (
                 <Image
-                  source={{ uri: imageUrl }}
+                  source={imageSource}
                   style={styles.cardImage}
                   resizeMode="contain"
+                  onError={(event) => {
+                    setImageFailed(true);
+                    console.warn(
+                      '[card-image] falha ao carregar',
+                      event.nativeEvent.error,
+                    );
+                  }}
                 />
               ) : (
                 <View style={[styles.cardImage, styles.cardImagePlaceholder]}>
