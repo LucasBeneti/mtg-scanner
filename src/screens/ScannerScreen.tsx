@@ -32,14 +32,23 @@ import { ManualFallbackModal } from '../components/ManualFallbackModal';
 import { makeCacheKey } from '../services/cardCache';
 import { parseCollectorOcrText } from '../services/collectorParser';
 import {
+  addCardToList,
+  getListById,
+  getListItemsForCard,
+  ListNotFoundError,
+  touchListAccess,
+} from '../services/listsRepository';
+import {
   fetchCardBySetAndNumber,
   type FetchCardResult,
   ScryfallError,
 } from '../services/scryfall';
 import type { ParsedCollectorInfo } from '../types/card';
+import type { CardFinish, CardList } from '../types/list';
+import { getUsdPriceCentsForFinish } from '../utils/money';
 
 /** Intervalo entre capturas automáticas para o OCR (em ms) */
-const SCAN_INTERVAL_MS = 650;
+const SCAN_INTERVAL_MS = 250;
 /** Leituras consecutivas iguais exigidas para confirmar a carta */
 const REQUIRED_CONFIRMATIONS = 2;
 /** Tentativas seguidas sem leitura antes de exibir o aviso de fallback manual */
@@ -58,7 +67,23 @@ interface OcrDebugSnapshot {
   errorMessage?: string;
 }
 
-export function ScannerScreen() {
+interface ExistingItemsState {
+  listId: number;
+  cardId: string;
+  quantities: Record<CardFinish, number>;
+}
+
+interface AddedToastState {
+  message: string;
+  listId: number;
+  listName: string;
+}
+
+interface ScannerScreenProps {
+  activeListId?: number | null;
+}
+
+export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
   const insets = useSafeAreaInsets();
   const { hasPermission, canRequestPermission, requestPermission } =
     useCameraPermission();
@@ -89,6 +114,12 @@ export function ScannerScreen() {
   const [scryfallError, setScryfallError] = useState<string | null>(null);
   const [manualModalVisible, setManualModalVisible] = useState(false);
   const [sheetExpanded, setSheetExpanded] = useState(false);
+  const [activeList, setActiveList] = useState<CardList | null>(null);
+  const [listModeError, setListModeError] = useState<string | null>(null);
+  const [existingItems, setExistingItems] = useState<ExistingItemsState | null>(
+    null,
+  );
+  const [addedToast, setAddedToast] = useState<AddedToastState | null>(null);
 
   const isProcessingFrameRef = useRef(false);
   const scanCountRef = useRef(0);
@@ -111,10 +142,107 @@ export function ScannerScreen() {
     }, []),
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      if (activeListId == null) {
+        setActiveList(null);
+        setListModeError(null);
+        return;
+      }
+
+      let active = true;
+
+      void (async () => {
+        try {
+          await touchListAccess(activeListId).catch(() => undefined);
+          const list = await getListById(activeListId);
+
+          if (!active) return;
+
+          if (list) {
+            setActiveList(list);
+            setListModeError(null);
+          } else {
+            setActiveList(null);
+            setListModeError(
+              'Lista não encontrada. Você pode continuar escaneando sem adicionar.',
+            );
+          }
+        } catch (error) {
+          console.warn('[lists] falha ao carregar lista ativa', error);
+
+          if (active) {
+            setActiveList(null);
+            setListModeError(
+              'Não foi possível carregar a lista. Escaneie sem adicionar.',
+            );
+          }
+        }
+      })();
+
+      return () => {
+        active = false;
+      };
+    }, [activeListId]),
+  );
+
+  useEffect(() => {
+    if (!activeList || !lastReadResult) {
+      return;
+    }
+
+    const listId = activeList.id;
+    const cardId = lastReadResult.card.id;
+    let active = true;
+
+    void (async () => {
+      try {
+        const items = await getListItemsForCard(listId, cardId);
+
+        if (!active) return;
+
+        const quantities: Record<CardFinish, number> = {
+          normal: 0,
+          foil: 0,
+          etched: 0,
+        };
+
+        for (const item of items) {
+          quantities[item.finish] = item.quantity;
+        }
+
+        setExistingItems({ listId, cardId, quantities });
+      } catch (error) {
+        console.warn('[lists] falha ao carregar quantidades existentes', error);
+
+        if (active) {
+          setExistingItems({
+            listId,
+            cardId,
+            quantities: { normal: 0, foil: 0, etched: 0 },
+          });
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [activeList, lastReadResult]);
+
+  useEffect(() => {
+    if (!addedToast) return;
+
+    const timer = setTimeout(() => setAddedToast(null), 5000);
+
+    return () => clearTimeout(timer);
+  }, [addedToast]);
+
   const lookupCardInScryfall = useCallback(
     async (parsed: ParsedCollectorInfo) => {
       const key = makeCacheKey(parsed.setCode, parsed.collectorNumber);
 
+      setAddedToast(null);
       setIsFetchingScryfall(true);
       setScryfallError(null);
 
@@ -145,6 +273,78 @@ export function ScannerScreen() {
     },
     [],
   );
+
+  const handleAddToList = useCallback(
+    async ({ finish, quantity }: { finish: CardFinish; quantity: number }) => {
+      if (!activeList || !lastReadResult) {
+        throw new Error('Lista ou carta indisponível para adicionar.');
+      }
+
+      const card = lastReadResult.card;
+      const entryPriceUsdCents = getUsdPriceCentsForFinish(card, finish);
+
+      try {
+        await addCardToList({
+          listId: activeList.id,
+          card,
+          finish,
+          quantity,
+          entryPriceUsdCents,
+          now: Date.now(),
+        });
+      } catch (error) {
+        if (error instanceof ListNotFoundError) {
+          setActiveList(null);
+          setListModeError(
+            'Lista não encontrada. Você pode continuar escaneando sem adicionar.',
+          );
+        }
+        throw error;
+      }
+
+      setExistingItems((current) => {
+        if (
+          !current ||
+          current.listId !== activeList.id ||
+          current.cardId !== card.id
+        ) {
+          return current;
+        }
+
+        return {
+          ...current,
+          quantities: {
+            ...current.quantities,
+            [finish]: current.quantities[finish] + quantity,
+          },
+        };
+      });
+
+      setSheetExpanded(false);
+      lastCandidateKeyRef.current = null;
+      streakCountRef.current = 0;
+      setAddedToast({
+        message:
+          quantity === 1
+            ? 'Carta adicionada à lista'
+            : `${quantity} cópias adicionadas à lista`,
+        listId: activeList.id,
+        listName: activeList.name,
+      });
+    },
+    [activeList, lastReadResult],
+  );
+
+  const handleViewAddedList = () => {
+    if (!addedToast) return;
+
+    const listId = addedToast.listId;
+    setAddedToast(null);
+    router.replace({
+      pathname: '/lists/[id]',
+      params: { id: String(listId) },
+    });
+  };
 
   const isLoopBlocked =
     !isScreenFocused ||
@@ -362,6 +562,20 @@ export function ScannerScreen() {
     ? peekHeight + 84
     : insets.bottom + 84;
 
+  const existingQuantitiesForCard =
+    activeList &&
+    lastReadResult &&
+    existingItems &&
+    existingItems.listId === activeList.id &&
+    existingItems.cardId === lastReadResult.card.id
+      ? existingItems.quantities
+      : undefined;
+
+  const hasListModeHeader = Boolean(activeList || listModeError);
+  const listModeHeaderTop = insets.top + 56;
+  const statusToastTop = insets.top + (hasListModeHeader ? 112 : 56);
+  const debugPanelTop = insets.top + (hasListModeHeader ? 152 : 96);
+
   return (
     <View style={styles.container}>
       <StatusBar style='light' />
@@ -424,9 +638,33 @@ export function ScannerScreen() {
         </Pressable>
       </View>
 
+      {/* Modo lista: indica para qual lista as próximas cartas serão adicionadas */}
+      {activeList ? (
+        <View
+          style={[styles.listModeBar, { top: listModeHeaderTop }]}
+          pointerEvents='none'
+        >
+          <Text style={styles.listModeLabel}>ADICIONANDO A</Text>
+          <Text style={styles.listModeName} numberOfLines={1}>
+            {activeList.name}
+          </Text>
+        </View>
+      ) : listModeError ? (
+        <View
+          style={[
+            styles.listModeBar,
+            styles.listModeErrorBar,
+            { top: listModeHeaderTop },
+          ]}
+          pointerEvents='none'
+        >
+          <Text style={styles.listModeErrorText}>{listModeError}</Text>
+        </View>
+      ) : null}
+
       {/* Toast de carregamento ao buscar na Scryfall */}
       {isFetchingScryfall ? (
-        <View style={[styles.fetchingToast, { top: insets.top + 56 }]}>
+        <View style={[styles.fetchingToast, { top: statusToastTop }]}>
           <ActivityIndicator size='small' color='#38BDF8' />
           <Text style={styles.fetchingToastText}>
             Buscando {confirmedCardInfo?.setCode.toUpperCase()} #
@@ -435,10 +673,29 @@ export function ScannerScreen() {
         </View>
       ) : null}
 
+      {addedToast ? (
+        <View style={[styles.addedToast, { top: statusToastTop }]}>
+          <View style={styles.addedToastInfo}>
+            <Text style={styles.addedToastTitle}>{addedToast.message}</Text>
+            <Text style={styles.addedToastSubtitle} numberOfLines={1}>
+              {addedToast.listName}
+            </Text>
+          </View>
+          <Pressable
+            style={styles.addedToastAction}
+            onPress={handleViewAddedList}
+            accessibilityRole='button'
+            accessibilityLabel='Ver lista'
+          >
+            <Text style={styles.addedToastActionText}>Ver lista</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {/* Painel de Debug opcional (Recorte + OCR + Parser) */}
       {showDebugPanel ? (
         <View
-          style={[styles.debugPanel, { top: insets.top + 96 }]}
+          style={[styles.debugPanel, { top: debugPanelTop }]}
           pointerEvents='none'
         >
           <View style={styles.debugHeaderRow}>
@@ -556,6 +813,10 @@ export function ScannerScreen() {
         expanded={sheetExpanded}
         onExpand={handleExpandResultSheet}
         onCollapse={handleCollapseResultSheet}
+        activeListName={activeList?.name ?? null}
+        existingQuantities={existingQuantitiesForCard}
+        onAddToList={handleAddToList}
+        onSkipCard={handleCollapseResultSheet}
       />
 
       {/* Modal de Fallback Manual */}
@@ -635,6 +896,80 @@ const styles = StyleSheet.create({
   permissionBackButton: {
     position: 'absolute',
     left: 16,
+  },
+  listModeBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.45)',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    zIndex: 9,
+  },
+  listModeErrorBar: {
+    borderColor: 'rgba(248, 113, 113, 0.55)',
+  },
+  listModeLabel: {
+    color: '#38BDF8',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  listModeName: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  listModeErrorText: {
+    color: '#FCA5A5',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  addedToast: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(74, 222, 128, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.94)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    zIndex: 12,
+  },
+  addedToastInfo: {
+    flex: 1,
+  },
+  addedToastTitle: {
+    color: '#4ADE80',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  addedToastSubtitle: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  addedToastAction: {
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  addedToastActionText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '800',
   },
   debugToggleButton: {
     paddingHorizontal: 12,

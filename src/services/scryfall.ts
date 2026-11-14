@@ -104,10 +104,9 @@ export async function fetchCardBySetAndNumber(
  * Monta o source do <Image> já com o User-Agent exigido pelo CDN da Scryfall.
  * O CDN rejeita UAs padrão de biblioteca (ex: okhttp/4.9.2) com HTTP 400.
  */
-export function getCardImageSource(card: ScryfallCard): ImageURISource | null {
-  const uri =
-    card.image_uris?.normal ?? card.card_faces?.[0]?.image_uris?.normal ?? null;
-
+export function getCardImageSourceFromUri(
+  uri: string | null,
+): ImageURISource | null {
   if (!uri) {
     return null;
   }
@@ -116,4 +115,11 @@ export function getCardImageSource(card: ScryfallCard): ImageURISource | null {
     uri,
     headers: { 'User-Agent': SCRYFALL_USER_AGENT },
   };
+}
+
+export function getCardImageSource(card: ScryfallCard): ImageURISource | null {
+  const uri =
+    card.image_uris?.normal ?? card.card_faces?.[0]?.image_uris?.normal ?? null;
+
+  return getCardImageSourceFromUri(uri);
 }

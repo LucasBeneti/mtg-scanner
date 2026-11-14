@@ -14,6 +14,10 @@ import type { ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getCardImageSource } from '../services/scryfall';
 import type { ScryfallCard } from '../types/card';
+import type { CardFinish } from '../types/list';
+import { getAvailableFinishes } from '../utils/cardSnapshot';
+import { formatUsdCents, parseUsdToCents } from '../utils/money';
+import { AddToListSection } from './list/AddToListSection';
 
 interface CardResultSheetProps {
   card: ScryfallCard | null;
@@ -21,15 +25,23 @@ interface CardResultSheetProps {
   expanded: boolean;
   onExpand: () => void;
   onCollapse: () => void;
+  activeListName?: string | null;
+  existingQuantities?: Partial<Record<CardFinish, number>>;
+  onAddToList?: (input: {
+    finish: CardFinish;
+    quantity: number;
+  }) => Promise<void>;
+  onSkipCard?: () => void;
 }
 
-type FinishOption = 'normal' | 'foil' | 'etched';
+type FinishOption = CardFinish;
 
 interface FinishPriceItem {
   key: FinishOption;
   label: string;
   usd: string | null;
   eur: string | null;
+  available: boolean;
 }
 
 const RARITY_LABELS: Record<ScryfallCard['rarity'], string> = {
@@ -56,6 +68,10 @@ export function CardResultSheet({
   expanded,
   onExpand,
   onCollapse,
+  activeListName,
+  existingQuantities,
+  onAddToList,
+  onSkipCard,
 }: CardResultSheetProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -163,15 +179,30 @@ export function CardResultSheet({
 
   useEffect(() => {
     if (!card) return;
-    if (card.prices.usd) {
-      setSelectedFinish('normal');
-    } else if (card.prices.usd_foil) {
-      setSelectedFinish('foil');
-    } else if (card.prices.usd_etched) {
-      setSelectedFinish('etched');
-    } else {
-      setSelectedFinish('normal');
-    }
+
+    const available = getAvailableFinishes(card);
+    const isAvailable = (finish: CardFinish) =>
+      available.length === 0 || available.includes(finish);
+
+    const candidates: {
+      finish: CardFinish;
+      price: string | null;
+    }[] = [
+      { finish: 'normal', price: card.prices.usd },
+      { finish: 'foil', price: card.prices.usd_foil },
+      { finish: 'etched', price: card.prices.usd_etched },
+    ];
+
+    const firstWithPrice = candidates.find(
+      (candidate) => isAvailable(candidate.finish) && candidate.price,
+    );
+    const firstAvailable = candidates.find((candidate) =>
+      isAvailable(candidate.finish),
+    );
+
+    setSelectedFinish(
+      firstWithPrice?.finish ?? firstAvailable?.finish ?? 'normal',
+    );
   }, [card]);
 
   useEffect(() => {
@@ -183,29 +214,40 @@ export function CardResultSheet({
     return null;
   }
 
+  const availableFinishes = getAvailableFinishes(card);
+  const isFinishAvailable = (finish: CardFinish) =>
+    availableFinishes.length === 0 || availableFinishes.includes(finish);
+
   const finishes: FinishPriceItem[] = [
     {
       key: 'normal',
       label: 'Normal',
       usd: card.prices.usd,
       eur: card.prices.eur,
+      available: isFinishAvailable('normal'),
     },
     {
       key: 'foil',
       label: 'Foil',
       usd: card.prices.usd_foil,
       eur: card.prices.eur_foil,
+      available: isFinishAvailable('foil'),
     },
     {
       key: 'etched',
       label: 'Etched / Surge',
       usd: card.prices.usd_etched,
       eur: card.prices.eur_etched ?? null,
+      available: isFinishAvailable('etched'),
     },
   ];
 
   const activeFinish =
-    finishes.find((f) => f.key === selectedFinish) ?? finishes[0];
+    finishes.find(
+      (finish) => finish.key === selectedFinish && finish.available,
+    ) ??
+    finishes.find((finish) => finish.available) ??
+    finishes[0];
   const imageSource = getCardImageSource(card);
   const oracleText =
     card.oracle_text ??
@@ -406,15 +448,15 @@ export function CardResultSheet({
           <View style={styles.finishGrid}>
             {finishes.map((item) => {
               const isSelected = item.key === activeFinish.key;
-              const hasPrice = item.usd !== null;
               return (
                 <Pressable
                   key={item.key}
                   onPress={() => setSelectedFinish(item.key)}
+                  disabled={!item.available}
                   style={[
                     styles.finishCard,
                     isSelected && styles.finishCardSelected,
-                    !hasPrice && styles.finishCardDisabled,
+                    !item.available && styles.finishCardDisabled,
                   ]}
                 >
                   <Text
@@ -437,6 +479,27 @@ export function CardResultSheet({
               );
             })}
           </View>
+
+          {activeListName && onAddToList ? (
+            <AddToListSection
+              key={`${card.id}:${activeFinish.key}`}
+              listName={activeListName}
+              finishLabel={activeFinish.label}
+              unitPriceLabel={
+                activeFinish.usd
+                  ? formatUsdCents(parseUsdToCents(activeFinish.usd))
+                  : 'Sem cotação'
+              }
+              existingQuantity={existingQuantities?.[activeFinish.key] ?? 0}
+              onAdd={(quantity) =>
+                onAddToList({
+                  finish: activeFinish.key,
+                  quantity,
+                })
+              }
+              onSkip={onSkipCard ?? onCollapse}
+            />
+          ) : null}
 
           {/* Texto Oracle / Regras */}
           {oracleText ? (

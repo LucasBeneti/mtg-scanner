@@ -315,6 +315,24 @@ export async function getListItemForCard(
   return row ? mapListItemRow(row) : null;
 }
 
+export async function getListItemsForCard(
+  listId: number,
+  cardId: string,
+): Promise<CardListItem[]> {
+  const db = await getDatabase();
+
+  const rows = await db.getAllAsync<ListItemRow>(
+    `SELECT *
+     FROM list_items
+     WHERE list_id = ? AND card_id = ?
+     ORDER BY finish`,
+    listId,
+    cardId,
+  );
+
+  return rows.map(mapListItemRow);
+}
+
 export async function addCardToList(input: AddCardToListInput): Promise<void> {
   const quantity = Math.floor(input.quantity);
 

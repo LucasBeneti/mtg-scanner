@@ -28,10 +28,17 @@ export function HomeScreen() {
     });
   };
 
+  const openScannerForList = (listId: number) => {
+    router.push({
+      pathname: '/scan',
+      params: { listId: String(listId) },
+    });
+  };
+
   const handleCreateList = async (name: string) => {
     const list = await createList(name);
     setIsCreateModalOpen(false);
-    openList(list.id);
+    openScannerForList(list.id);
   };
 
   return (

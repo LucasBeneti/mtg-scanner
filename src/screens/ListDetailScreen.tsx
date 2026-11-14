@@ -11,17 +11,18 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ConfirmDialog } from '../components/list/ConfirmDialog';
+import { ListItemRow } from '../components/list/ListItemRow';
 import { ListNameModal } from '../components/list/ListNameModal';
 import { useListDetail } from '../hooks/useListDetail';
-import { deleteList, renameList } from '../services/listsRepository';
-import type { CardFinish } from '../types/list';
+import {
+  decrementItemQuantity,
+  deleteList,
+  incrementItemQuantity,
+  removeListItem,
+  renameList,
+} from '../services/listsRepository';
+import type { CardListItem } from '../types/list';
 import { formatUsdCents } from '../utils/money';
-
-const FINISH_LABELS: Record<CardFinish, string> = {
-  normal: 'Normal',
-  foil: 'Foil',
-  etched: 'Etched / Surge',
-};
 
 interface ListDetailScreenProps {
   listId: number | null;
@@ -33,6 +34,9 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
   const { detail, isLoading, error, reload } = useListDetail(listId);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [itemToRemove, setItemToRemove] = useState<CardListItem | null>(null);
+  const [pendingItemId, setPendingItemId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -40,6 +44,40 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
       return;
     }
     router.replace('/');
+  };
+
+  const handleIncrement = async (item: CardListItem) => {
+    if (pendingItemId != null) return;
+
+    setPendingItemId(item.id);
+    setActionError(null);
+
+    try {
+      await incrementItemQuantity(item.id);
+      await reload();
+    } catch (updateError) {
+      console.warn('[lists] falha ao aumentar quantidade', updateError);
+      setActionError('Não foi possível atualizar a quantidade.');
+    } finally {
+      setPendingItemId(null);
+    }
+  };
+
+  const handleDecrement = async (item: CardListItem) => {
+    if (pendingItemId != null) return;
+
+    setPendingItemId(item.id);
+    setActionError(null);
+
+    try {
+      await decrementItemQuantity(item.id);
+      await reload();
+    } catch (updateError) {
+      console.warn('[lists] falha ao diminuir quantidade', updateError);
+      setActionError('Não foi possível atualizar a quantidade.');
+    } finally {
+      setPendingItemId(null);
+    }
   };
 
   const countLabel =
@@ -119,6 +157,22 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
               <Text style={styles.summaryMeta}>{countLabel} nesta lista</Text>
             </View>
 
+            <Pressable
+              style={styles.addCardsPrimaryButton}
+              onPress={() =>
+                router.push({
+                  pathname: '/scan',
+                  params: { listId: String(detail.id) },
+                })
+              }
+              accessibilityRole='button'
+              accessibilityLabel='Adicionar cartas a esta lista'
+            >
+              <Text style={styles.addCardsPrimaryButtonText}>
+                Adicionar cartas
+              </Text>
+            </Pressable>
+
             <View style={styles.actionsRow}>
               <Pressable
                 style={styles.actionButton}
@@ -142,46 +196,30 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
               <Text style={styles.sectionMeta}>{countLabel}</Text>
             </View>
 
+            {actionError ? (
+              <Text style={styles.actionErrorText}>{actionError}</Text>
+            ) : null}
+
             {detail.items.length === 0 ? (
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyTitle}>Nenhuma carta nesta lista</Text>
                 <Text style={styles.emptyText}>
-                  A adição de cartas pelo scanner entra na próxima fase.
+                  Toque em “Adicionar cartas” para escanear e registrar cartas
+                  nesta lista.
                 </Text>
-                <Pressable
-                  style={[styles.addCardsButton, styles.addCardsButtonDisabled]}
-                  disabled
-                  accessibilityRole='button'
-                  accessibilityState={{ disabled: true }}
-                >
-                  <Text style={styles.addCardsButtonText}>
-                    Adicionar cartas
-                  </Text>
-                </Pressable>
               </View>
             ) : (
               <View style={styles.itemsStack}>
-                {detail.items.map((item) => {
-                  const unitPrice =
-                    item.currentPriceUsdCents ?? item.entryPriceUsdCents;
-
-                  return (
-                    <View key={item.id} style={styles.itemRow}>
-                      <View style={styles.itemInfo}>
-                        <Text style={styles.itemName} numberOfLines={1}>
-                          {item.snapshot.printedName ?? item.snapshot.name}
-                        </Text>
-                        <Text style={styles.itemMeta} numberOfLines={1}>
-                          {item.setCode.toUpperCase()} #{item.collectorNumber} •{' '}
-                          {FINISH_LABELS[item.finish]} • {item.quantity}x
-                        </Text>
-                      </View>
-                      <Text style={styles.itemPrice}>
-                        {formatUsdCents(unitPrice)}
-                      </Text>
-                    </View>
-                  );
-                })}
+                {detail.items.map((item) => (
+                  <ListItemRow
+                    key={item.id}
+                    item={item}
+                    isPending={pendingItemId === item.id}
+                    onIncrement={() => void handleIncrement(item)}
+                    onDecrement={() => void handleDecrement(item)}
+                    onRemove={() => setItemToRemove(item)}
+                  />
+                ))}
               </View>
             )}
           </>
@@ -212,6 +250,26 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
           onConfirm={async () => {
             await deleteList(detail.id);
             handleGoBack();
+          }}
+        />
+      ) : null}
+
+      {itemToRemove ? (
+        <ConfirmDialog
+          title='Remover carta'
+          message={`Remover ${itemToRemove.quantity} ${
+            itemToRemove.quantity === 1 ? 'cópia' : 'cópias'
+          } de "${
+            itemToRemove.snapshot.printedName ?? itemToRemove.snapshot.name
+          }" da lista?`}
+          confirmLabel='Remover'
+          destructive
+          onCancel={() => setItemToRemove(null)}
+          onConfirm={async () => {
+            await removeListItem(itemToRemove.id);
+            setItemToRemove(null);
+            setActionError(null);
+            await reload();
           }}
         />
       ) : null}
@@ -281,10 +339,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
+  addCardsPrimaryButton: {
+    borderRadius: 14,
+    backgroundColor: '#38BDF8',
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  addCardsPrimaryButtonText: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
+  },
   actionsRow: {
     flexDirection: 'row',
     gap: 10,
-    marginBottom: 28,
+    marginBottom: 24,
   },
   actionButton: {
     flex: 1,
@@ -324,6 +394,12 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 11,
     fontWeight: '600',
+  },
+  actionErrorText: {
+    color: '#F87171',
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 10,
   },
   stateCard: {
     borderRadius: 16,
@@ -377,52 +453,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     textAlign: 'center',
   },
-  addCardsButton: {
-    borderRadius: 12,
-    backgroundColor: '#38BDF8',
-    paddingVertical: 13,
-    alignItems: 'center',
-    marginTop: 16,
-  },
-  addCardsButtonDisabled: {
-    opacity: 0.45,
-  },
-  addCardsButtonText: {
-    color: '#0F172A',
-    fontSize: 14,
-    fontWeight: '800',
-  },
   itemsStack: {
     gap: 8,
-  },
-  itemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#334155',
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  itemInfo: {
-    flex: 1,
-  },
-  itemName: {
-    color: '#F8FAFC',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  itemMeta: {
-    color: '#94A3B8',
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 3,
-  },
-  itemPrice: {
-    color: '#4ADE80',
-    fontSize: 13,
-    fontWeight: '800',
   },
 });
