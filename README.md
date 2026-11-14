@@ -9,11 +9,25 @@ Aplicativo mobile (Android-first, preparado para iOS) para identificar cartas de
 ## Stack
 
 - **Expo SDK 58** (React Native 0.88, TypeScript, New Architecture)
+- **Expo Router** (navegação e rotas tipadas)
 - **`react-native-vision-camera`** (câmera + captura de frames)
 - **`@react-native-ml-kit/text-recognition`** (OCR on-device via Google ML Kit, modelo Latin bundled)
 - **`expo-image-manipulator`** (recorte da região do código da carta)
-- **`expo-sqlite`** (cache local de cartas já consultadas)
-- **Scryfall API** (identificação e preços em USD — Fase 4/5)
+- **`expo-sqlite`** (cache local de cartas e listas)
+- **Scryfall API** (identificação, preços e refresh em lote via `/cards/collection`)
+
+---
+
+## Listas de cartas
+
+- CRUD local de listas: criar, renomear e excluir.
+- Home com as 3 listas mais recentes e tela “Ver todas”.
+- Fluxo de scan em modo lista: escolher acabamento, quantidade, adicionar ou pular.
+- Detalhe com miniatura, preço unitário, total da linha, ajuste de quantidade e remoção.
+- Preço de entrada congelado na última adição e preço atual atualizado manualmente.
+- Refresh em lote com sucesso parcial, lotes de 75 e respeito ao rate limit da Scryfall.
+- Dados somente locais; sem conta, backend ou sync.
+- Decisões registradas em [`docs/adr`](./docs/adr).
 
 ---
 
