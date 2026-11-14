@@ -5,8 +5,7 @@ import { normalizeCollectorNumber } from './collectorParser';
 
 const SCRYFALL_BASE_URL = 'https://api.scryfall.com';
 
-export const SCRYFALL_USER_AGENT =
-  'MTGScannerMobile/0.1 (Expo React Native)';
+export const SCRYFALL_USER_AGENT = 'MTGScannerMobile/0.1 (Expo React Native)';
 
 /**
  * A API da Scryfall exige headers User-Agent e Accept em todas as chamadas.
@@ -25,7 +24,7 @@ async function waitForRateLimit(): Promise<void> {
   const elapsed = now - lastRequestTimestamp;
   if (elapsed < MIN_REQUEST_INTERVAL_MS) {
     await new Promise((resolve) =>
-      setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed)
+      setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed),
     );
   }
   lastRequestTimestamp = Date.now();
@@ -51,7 +50,7 @@ export interface FetchCardResult {
  */
 export async function fetchCardBySetAndNumber(
   rawSetCode: string,
-  rawCollectorNumber: string
+  rawCollectorNumber: string,
 ): Promise<FetchCardResult> {
   const setCode = rawSetCode.trim().toLowerCase();
   const collectorNumber = normalizeCollectorNumber(rawCollectorNumber);
@@ -66,7 +65,7 @@ export async function fetchCardBySetAndNumber(
   await waitForRateLimit();
 
   const url = `${SCRYFALL_BASE_URL}/cards/${encodeURIComponent(
-    setCode
+    setCode,
   )}/${encodeURIComponent(collectorNumber)}`;
 
   const response = await fetch(url, {
@@ -78,18 +77,18 @@ export async function fetchCardBySetAndNumber(
     if (response.status === 404) {
       throw new ScryfallError(
         `Carta não encontrada na Scryfall: ${setCode.toUpperCase()} #${collectorNumber}`,
-        404
+        404,
       );
     }
     if (response.status === 429) {
       throw new ScryfallError(
         'Limite de requisições da Scryfall atingido (HTTP 429). Aguarde alguns segundos.',
-        429
+        429,
       );
     }
     throw new ScryfallError(
       `Erro ao consultar Scryfall (HTTP ${response.status}).`,
-      response.status
+      response.status,
     );
   }
 
@@ -107,9 +106,7 @@ export async function fetchCardBySetAndNumber(
  */
 export function getCardImageSource(card: ScryfallCard): ImageURISource | null {
   const uri =
-    card.image_uris?.normal ??
-    card.card_faces?.[0]?.image_uris?.normal ??
-    null;
+    card.image_uris?.normal ?? card.card_faces?.[0]?.image_uris?.normal ?? null;
 
   if (!uri) {
     return null;

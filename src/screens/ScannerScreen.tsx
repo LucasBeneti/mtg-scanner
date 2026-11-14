@@ -2,10 +2,12 @@ import TextRecognition, {
   TextRecognitionScript,
 } from '@react-native-ml-kit/text-recognition';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { router, useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   Image,
   Pressable,
   StyleSheet,
@@ -22,8 +24,12 @@ import {
   CameraOverlay,
   computeCollectorCropRect,
 } from '../components/CameraOverlay';
-import { CardResultSheet } from '../components/CardResultSheet';
+import {
+  CardResultSheet,
+  getCardPeekHeight,
+} from '../components/CardResultSheet';
 import { ManualFallbackModal } from '../components/ManualFallbackModal';
+import { makeCacheKey } from '../services/cardCache';
 import { parseCollectorOcrText } from '../services/collectorParser';
 import {
   fetchCardBySetAndNumber,
@@ -38,6 +44,8 @@ const SCAN_INTERVAL_MS = 650;
 const REQUIRED_CONFIRMATIONS = 2;
 /** Tentativas seguidas sem leitura antes de exibir o aviso de fallback manual */
 const EMPTY_SCANS_BEFORE_HINT = 7;
+/** Tempo mínimo antes de tentar de novo um código que acabou de falhar */
+const FAILED_LOOKUP_COOLDOWN_MS = 10_000;
 
 interface OcrDebugSnapshot {
   croppedUri: string;
@@ -65,6 +73,7 @@ export function ScannerScreen() {
   const [hasToggledTorch, setHasToggledTorch] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [isScreenFocused, setIsScreenFocused] = useState(false);
 
   const [debugSnapshot, setDebugSnapshot] = useState<OcrDebugSnapshot | null>(
     null,
@@ -74,16 +83,20 @@ export function ScannerScreen() {
   const [emptyScanCount, setEmptyScanCount] = useState(0);
 
   const [isFetchingScryfall, setIsFetchingScryfall] = useState(false);
-  const [scryfallResult, setScryfallResult] = useState<FetchCardResult | null>(
+  const [lastReadResult, setLastReadResult] = useState<FetchCardResult | null>(
     null,
   );
   const [scryfallError, setScryfallError] = useState<string | null>(null);
   const [manualModalVisible, setManualModalVisible] = useState(false);
+  const [sheetExpanded, setSheetExpanded] = useState(false);
 
   const isProcessingFrameRef = useRef(false);
   const scanCountRef = useRef(0);
   const lastCandidateKeyRef = useRef<string | null>(null);
   const streakCountRef = useRef(0);
+  const lastReadKeyRef = useRef<string | null>(null);
+  const failedKeyRef = useRef<string | null>(null);
+  const failedAtRef = useRef(0);
 
   useEffect(() => {
     if (!hasPermission && canRequestPermission) {
@@ -91,8 +104,17 @@ export function ScannerScreen() {
     }
   }, [hasPermission, canRequestPermission, requestPermission]);
 
+  useFocusEffect(
+    useCallback(() => {
+      setIsScreenFocused(true);
+      return () => setIsScreenFocused(false);
+    }, []),
+  );
+
   const lookupCardInScryfall = useCallback(
     async (parsed: ParsedCollectorInfo) => {
+      const key = makeCacheKey(parsed.setCode, parsed.collectorNumber);
+
       setIsFetchingScryfall(true);
       setScryfallError(null);
 
@@ -101,10 +123,13 @@ export function ScannerScreen() {
           parsed.setCode,
           parsed.collectorNumber,
         );
-        setScryfallResult(result);
+        setLastReadResult(result);
+        setSheetExpanded(true);
         setEmptyScanCount(0);
+        lastReadKeyRef.current = key;
+        failedKeyRef.current = null;
+        failedAtRef.current = 0;
       } catch (err) {
-        setScryfallResult(null);
         if (err instanceof ScryfallError) {
           setScryfallError(err.message);
         } else {
@@ -112,6 +137,8 @@ export function ScannerScreen() {
             'Falha de conexão ao consultar a Scryfall. Verifique a internet.',
           );
         }
+        failedKeyRef.current = key;
+        failedAtRef.current = Date.now();
       } finally {
         setIsFetchingScryfall(false);
       }
@@ -120,9 +147,10 @@ export function ScannerScreen() {
   );
 
   const isLoopBlocked =
+    !isScreenFocused ||
     isPaused ||
     isFetchingScryfall ||
-    scryfallResult !== null ||
+    sheetExpanded ||
     manualModalVisible;
 
   const captureAndRecognizeOnce = useCallback(async () => {
@@ -185,7 +213,16 @@ export function ScannerScreen() {
           setConfirmedCardInfo(parsed);
           lastCandidateKeyRef.current = null;
           streakCountRef.current = 0;
-          void lookupCardInScryfall(parsed);
+
+          const key = makeCacheKey(parsed.setCode, parsed.collectorNumber);
+          const isSameAsLastRead = key === lastReadKeyRef.current;
+          const isInFailedCooldown =
+            key === failedKeyRef.current &&
+            Date.now() - failedAtRef.current < FAILED_LOOKUP_COOLDOWN_MS;
+
+          if (!isSameAsLastRead && !isInFailedCooldown) {
+            void lookupCardInScryfall(parsed);
+          }
         }
       } else {
         lastCandidateKeyRef.current = null;
@@ -231,10 +268,44 @@ export function ScannerScreen() {
     return () => clearInterval(timer);
   }, [captureAndRecognizeOnce]);
 
+  useEffect(() => {
+    if (!sheetExpanded) return;
+
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        setSheetExpanded(false);
+        return true;
+      },
+    );
+
+    return () => subscription.remove();
+  }, [sheetExpanded]);
+
+  const handleGoBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/');
+  };
+
   if (!hasPermission) {
     return (
       <View style={styles.permissionContainer}>
         <StatusBar style='light' />
+        <Pressable
+          style={[
+            styles.backButton,
+            styles.permissionBackButton,
+            { top: insets.top + 12 },
+          ]}
+          onPress={handleGoBack}
+          accessibilityRole='button'
+          accessibilityLabel='Voltar para a tela inicial'
+        >
+          <Text style={styles.backButtonText}>‹ Início</Text>
+        </Pressable>
         <Text style={styles.permissionTitle}>
           Permissão de Câmera Necessária
         </Text>
@@ -272,16 +343,24 @@ export function ScannerScreen() {
       return next;
     });
 
-  const handleCloseResultSheet = () => {
-    setScryfallResult(null);
-    setConfirmedCardInfo(null);
-    setEmptyScanCount(0);
+  const handleCollapseResultSheet = () => {
+    setSheetExpanded(false);
     lastCandidateKeyRef.current = null;
     streakCountRef.current = 0;
   };
 
+  const handleExpandResultSheet = () => {
+    setSheetExpanded(true);
+  };
+
   const isCameraActive =
-    !isPaused && scryfallResult === null && !manualModalVisible;
+    isScreenFocused && !isPaused && !sheetExpanded && !manualModalVisible;
+
+  const peekHeight = getCardPeekHeight(insets.bottom);
+  const bottomBarBottom = lastReadResult ? peekHeight + 12 : insets.bottom + 16;
+  const fallbackBannerBottom = lastReadResult
+    ? peekHeight + 84
+    : insets.bottom + 84;
 
   return (
     <View style={styles.container}>
@@ -313,8 +392,20 @@ export function ScannerScreen() {
         isConfirmed={isCurrentFrameConfirmed}
       />
 
-      {/* Botão discreto no topo para ligar/desligar o painel de Debug OCR */}
-      <View style={[styles.topActionsRow, { top: insets.top + 12 }]}>
+      {/* Barra superior: voltar para a Home + toggle do painel de Debug OCR */}
+      <View
+        style={[styles.topBar, { top: insets.top + 12 }]}
+        pointerEvents='box-none'
+      >
+        <Pressable
+          style={styles.backButton}
+          onPress={handleGoBack}
+          accessibilityRole='button'
+          accessibilityLabel='Voltar para a tela inicial'
+        >
+          <Text style={styles.backButtonText}>‹ Início</Text>
+        </Pressable>
+
         <Pressable
           style={[
             styles.debugToggleButton,
@@ -335,7 +426,7 @@ export function ScannerScreen() {
 
       {/* Toast de carregamento ao buscar na Scryfall */}
       {isFetchingScryfall ? (
-        <View style={[styles.fetchingToast, { top: insets.top + 12 }]}>
+        <View style={[styles.fetchingToast, { top: insets.top + 56 }]}>
           <ActivityIndicator size='small' color='#38BDF8' />
           <Text style={styles.fetchingToastText}>
             Buscando {confirmedCardInfo?.setCode.toUpperCase()} #
@@ -347,7 +438,7 @@ export function ScannerScreen() {
       {/* Painel de Debug opcional (Recorte + OCR + Parser) */}
       {showDebugPanel ? (
         <View
-          style={[styles.debugPanel, { top: insets.top + 48 }]}
+          style={[styles.debugPanel, { top: insets.top + 96 }]}
           pointerEvents='none'
         >
           <View style={styles.debugHeaderRow}>
@@ -402,10 +493,11 @@ export function ScannerScreen() {
       ) : null}
 
       {/* Banner de Fallback Manual quando a leitura falha várias vezes ou ocorre erro */}
-      {(emptyScanCount >= EMPTY_SCANS_BEFORE_HINT || scryfallError) &&
-      !scryfallResult ? (
+      {(scryfallError ||
+        (!lastReadResult && emptyScanCount >= EMPTY_SCANS_BEFORE_HINT)) &&
+      !sheetExpanded ? (
         <Pressable
-          style={[styles.fallbackBanner, { bottom: insets.bottom + 84 }]}
+          style={[styles.fallbackBanner, { bottom: fallbackBannerBottom }]}
           onPress={() => setManualModalVisible(true)}
         >
           <Text style={styles.fallbackBannerTitle}>
@@ -419,7 +511,7 @@ export function ScannerScreen() {
       ) : null}
 
       {/* Controles inferiores */}
-      <View style={[styles.bottomBar, { bottom: insets.bottom + 16 }]}>
+      <View style={[styles.bottomBar, { bottom: bottomBarBottom }]}>
         <Pressable
           style={[styles.controlButton, torchOn && styles.controlButtonActive]}
           onPress={toggleTorch}
@@ -459,9 +551,11 @@ export function ScannerScreen() {
 
       {/* Bottom Sheet com detalhes da carta e todos os preços disponíveis */}
       <CardResultSheet
-        card={scryfallResult?.card ?? null}
-        fromCache={scryfallResult?.fromCache ?? false}
-        onClose={handleCloseResultSheet}
+        card={lastReadResult?.card ?? null}
+        fromCache={lastReadResult?.fromCache ?? false}
+        expanded={sheetExpanded}
+        onExpand={handleExpandResultSheet}
+        onCollapse={handleCollapseResultSheet}
       />
 
       {/* Modal de Fallback Manual */}
@@ -516,10 +610,31 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
   },
-  topActionsRow: {
+  topBar: {
     position: 'absolute',
+    left: 16,
     right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     zIndex: 10,
+  },
+  backButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: 'rgba(15, 23, 42, 0.82)',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  backButtonText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  permissionBackButton: {
+    position: 'absolute',
+    left: 16,
   },
   debugToggleButton: {
     paddingHorizontal: 12,

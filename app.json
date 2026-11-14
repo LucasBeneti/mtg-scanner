@@ -3,6 +3,7 @@
     "name": "MTG Scanner",
     "slug": "mtg-scanner",
     "version": "1.0.0",
+    "scheme": "mtgscanner",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -29,6 +30,9 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "experiments": {
+      "typedRoutes": true
+    },
     "plugins": [
       "expo-sqlite",
       [
@@ -41,7 +45,9 @@
             "enableMinifyInReleaseBuilds": false
           }
         }
-      ]
+      ],
+      "expo-router",
+      "expo-status-bar"
     ]
   }
 }
