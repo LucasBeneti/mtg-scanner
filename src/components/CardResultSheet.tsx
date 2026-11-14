@@ -19,6 +19,13 @@ import { getAvailableFinishes } from '../utils/cardSnapshot';
 import { formatUsdCents, parseUsdToCents } from '../utils/money';
 import { AddToListSection } from './list/AddToListSection';
 
+/*
+ * Este componente usa Animated + PanResponder de forma imperativa. Os
+ * handlers de gesto leem refs apenas durante o gesto, nunca durante o render;
+ * a regra react-hooks/refs não modela esse caso e gera falsos positivos.
+ */
+/* eslint-disable react-hooks/refs */
+
 interface CardResultSheetProps {
   card: ScryfallCard | null;
   fromCache: boolean;
@@ -62,6 +69,30 @@ export function getCardPeekHeight(bottomInset: number): number {
   );
 }
 
+function getDefaultFinish(card: ScryfallCard): FinishOption {
+  const available = getAvailableFinishes(card);
+  const isAvailable = (finish: FinishOption) =>
+    available.length === 0 || available.includes(finish);
+
+  const candidates: {
+    finish: FinishOption;
+    price: string | null;
+  }[] = [
+    { finish: 'normal', price: card.prices.usd },
+    { finish: 'foil', price: card.prices.usd_foil },
+    { finish: 'etched', price: card.prices.usd_etched },
+  ];
+
+  const firstWithPrice = candidates.find(
+    (candidate) => isAvailable(candidate.finish) && candidate.price,
+  );
+  const firstAvailable = candidates.find((candidate) =>
+    isAvailable(candidate.finish),
+  );
+
+  return firstWithPrice?.finish ?? firstAvailable?.finish ?? 'normal';
+}
+
 export function CardResultSheet({
   card,
   fromCache,
@@ -76,19 +107,30 @@ export function CardResultSheet({
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
 
-  const [selectedFinish, setSelectedFinish] = useState<FinishOption>('normal');
-  const [imageFailed, setImageFailed] = useState(false);
+  const [finishSelection, setFinishSelection] = useState<{
+    cardId: string | null;
+    finish: FinishOption;
+  }>({ cardId: null, finish: 'normal' });
+  const [imageFailure, setImageFailure] = useState<{
+    cardId: string | null;
+    failed: boolean;
+  }>({ cardId: null, failed: false });
   const [sheetHeight, setSheetHeight] = useState(0);
 
-  const translateY = useRef(new Animated.Value(windowHeight)).current;
+  const [translateY] = useState(() => new Animated.Value(windowHeight));
   const sheetHeightRef = useRef(0);
   const startYRef = useRef(0);
   const scrollViewRef = useRef<ScrollViewInstance>(null);
   const expandedRef = useRef(expanded);
   const callbacksRef = useRef({ onExpand, onCollapse });
 
-  expandedRef.current = expanded;
-  callbacksRef.current = { onExpand, onCollapse };
+  useEffect(() => {
+    expandedRef.current = expanded;
+  }, [expanded]);
+
+  useEffect(() => {
+    callbacksRef.current = { onExpand, onCollapse };
+  }, [onExpand, onCollapse]);
 
   const peekHeight = getCardPeekHeight(insets.bottom);
 
@@ -170,40 +212,8 @@ export function CardResultSheet({
   ).current;
 
   useEffect(() => {
-    setImageFailed(false);
-  }, [card?.id]);
-
-  useEffect(() => {
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
   }, [card?.id]);
-
-  useEffect(() => {
-    if (!card) return;
-
-    const available = getAvailableFinishes(card);
-    const isAvailable = (finish: CardFinish) =>
-      available.length === 0 || available.includes(finish);
-
-    const candidates: {
-      finish: CardFinish;
-      price: string | null;
-    }[] = [
-      { finish: 'normal', price: card.prices.usd },
-      { finish: 'foil', price: card.prices.usd_foil },
-      { finish: 'etched', price: card.prices.usd_etched },
-    ];
-
-    const firstWithPrice = candidates.find(
-      (candidate) => isAvailable(candidate.finish) && candidate.price,
-    );
-    const firstAvailable = candidates.find((candidate) =>
-      isAvailable(candidate.finish),
-    );
-
-    setSelectedFinish(
-      firstWithPrice?.finish ?? firstAvailable?.finish ?? 'normal',
-    );
-  }, [card]);
 
   useEffect(() => {
     if (sheetHeight <= 0) return;
@@ -213,6 +223,12 @@ export function CardResultSheet({
   if (!card) {
     return null;
   }
+
+  const selectedFinish =
+    finishSelection.cardId === card.id
+      ? finishSelection.finish
+      : getDefaultFinish(card);
+  const imageFailed = imageFailure.failed && imageFailure.cardId === card.id;
 
   const availableFinishes = getAvailableFinishes(card);
   const isFinishAvailable = (finish: CardFinish) =>
@@ -309,7 +325,7 @@ export function CardResultSheet({
               source={imageSource}
               style={styles.peekImage}
               resizeMode='cover'
-              onError={() => setImageFailed(true)}
+              onError={() => setImageFailure({ cardId: card.id, failed: true })}
             />
           ) : (
             <View style={[styles.peekImage, styles.peekImagePlaceholder]}>
@@ -374,7 +390,7 @@ export function CardResultSheet({
                 style={styles.cardImage}
                 resizeMode='contain'
                 onError={(event) => {
-                  setImageFailed(true);
+                  setImageFailure({ cardId: card.id, failed: true });
                   console.warn(
                     '[card-image] falha ao carregar',
                     event.nativeEvent.error,
@@ -451,8 +467,23 @@ export function CardResultSheet({
               return (
                 <Pressable
                   key={item.key}
-                  onPress={() => setSelectedFinish(item.key)}
+                  onPress={() =>
+                    setFinishSelection({
+                      cardId: card.id,
+                      finish: item.key,
+                    })
+                  }
                   disabled={!item.available}
+                  accessibilityRole='button'
+                  accessibilityLabel={`${item.label}, ${
+                    item.usd
+                      ? formatUsdCents(parseUsdToCents(item.usd))
+                      : 'sem cotação'
+                  }`}
+                  accessibilityState={{
+                    disabled: !item.available,
+                    selected: isSelected,
+                  }}
                   style={[
                     styles.finishCard,
                     isSelected && styles.finishCardSelected,

@@ -15,12 +15,12 @@ import { formatUsdCents } from '../../utils/money';
 interface ListItemRowProps {
   item: CardListItem;
   isPending: boolean;
-  onIncrement: () => void;
-  onDecrement: () => void;
-  onRemove: () => void;
+  onIncrement: (itemId: number) => void;
+  onDecrement: (itemId: number) => void;
+  onRemove: (itemId: number) => void;
 }
 
-export function ListItemRow({
+export const ListItemRow = React.memo(function ListItemRow({
   item,
   isPending,
   onIncrement,
@@ -100,10 +100,11 @@ export function ListItemRow({
               styles.stepperButton,
               (item.quantity <= 1 || isPending) && styles.stepperButtonDisabled,
             ]}
-            onPress={onDecrement}
+            onPress={() => onDecrement(item.id)}
             disabled={item.quantity <= 1 || isPending}
             accessibilityRole='button'
             accessibilityLabel={`Diminuir quantidade de ${displayName}`}
+            hitSlop={6}
           >
             <Text style={styles.stepperButtonText}>−</Text>
           </Pressable>
@@ -115,10 +116,11 @@ export function ListItemRow({
               styles.stepperButton,
               isPending && styles.stepperButtonDisabled,
             ]}
-            onPress={onIncrement}
+            onPress={() => onIncrement(item.id)}
             disabled={isPending}
             accessibilityRole='button'
             accessibilityLabel={`Aumentar quantidade de ${displayName}`}
+            hitSlop={6}
           >
             <Text style={styles.stepperButtonText}>+</Text>
           </Pressable>
@@ -136,9 +138,10 @@ export function ListItemRow({
         ) : (
           <Pressable
             style={styles.removeButton}
-            onPress={onRemove}
+            onPress={() => onRemove(item.id)}
             accessibilityRole='button'
             accessibilityLabel={`Remover ${displayName} da lista`}
+            hitSlop={6}
           >
             <Text style={styles.removeButtonText}>Remover</Text>
           </Pressable>
@@ -146,7 +149,7 @@ export function ListItemRow({
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {

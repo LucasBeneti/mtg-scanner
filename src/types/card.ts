@@ -57,6 +57,6 @@ export interface ScryfallCard {
   collector_number: string;
   rarity: 'common' | 'uncommon' | 'rare' | 'mythic' | 'special' | 'bonus';
   artist?: string;
-  finishes?: Array<'nonfoil' | 'foil' | 'etched'>;
+  finishes?: ('nonfoil' | 'foil' | 'etched')[];
   prices: CardPrices;
 }

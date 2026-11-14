@@ -1,8 +1,9 @@
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -61,39 +62,56 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
     router.replace('/');
   };
 
-  const handleIncrement = async (item: CardListItem) => {
-    if (pendingItemId != null) return;
+  const handleIncrement = useCallback(
+    async (itemId: number) => {
+      if (pendingItemId != null) return;
 
-    setPendingItemId(item.id);
-    setActionError(null);
+      setPendingItemId(itemId);
+      setActionError(null);
 
-    try {
-      await incrementItemQuantity(item.id);
-      await reload();
-    } catch (updateError) {
-      console.warn('[lists] falha ao aumentar quantidade', updateError);
-      setActionError('Não foi possível atualizar a quantidade.');
-    } finally {
-      setPendingItemId(null);
-    }
-  };
+      try {
+        await incrementItemQuantity(itemId);
+        await reload();
+      } catch (updateError) {
+        console.warn('[lists] falha ao aumentar quantidade', updateError);
+        setActionError('Não foi possível atualizar a quantidade.');
+      } finally {
+        setPendingItemId(null);
+      }
+    },
+    [pendingItemId, reload],
+  );
 
-  const handleDecrement = async (item: CardListItem) => {
-    if (pendingItemId != null) return;
+  const handleDecrement = useCallback(
+    async (itemId: number) => {
+      if (pendingItemId != null) return;
 
-    setPendingItemId(item.id);
-    setActionError(null);
+      setPendingItemId(itemId);
+      setActionError(null);
 
-    try {
-      await decrementItemQuantity(item.id);
-      await reload();
-    } catch (updateError) {
-      console.warn('[lists] falha ao diminuir quantidade', updateError);
-      setActionError('Não foi possível atualizar a quantidade.');
-    } finally {
-      setPendingItemId(null);
-    }
-  };
+      try {
+        await decrementItemQuantity(itemId);
+        await reload();
+      } catch (updateError) {
+        console.warn('[lists] falha ao diminuir quantidade', updateError);
+        setActionError('Não foi possível atualizar a quantidade.');
+      } finally {
+        setPendingItemId(null);
+      }
+    },
+    [pendingItemId, reload],
+  );
+
+  const handleRemoveRequest = useCallback(
+    (itemId: number) => {
+      const item = detail?.items.find((candidate) => candidate.id === itemId);
+
+      if (item) {
+        setItemToRemove(item);
+      }
+    },
+    [detail],
+  );
 
   const handleRefresh = async () => {
     if (!detail || isRefreshing || detail.items.length === 0) {
@@ -129,65 +147,97 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
         ? '1 carta'
         : `${detail.cardCount} cartas`;
 
+  if (isLoading || error || detail == null) {
+    return (
+      <View style={styles.container}>
+        <StatusBar style='light' />
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            {
+              paddingTop: insets.top + 16,
+              paddingBottom: insets.bottom + 32,
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <Pressable
+            style={styles.backButton}
+            onPress={handleGoBack}
+            accessibilityRole='button'
+            accessibilityLabel='Voltar'
+          >
+            <Text style={styles.backButtonText}>‹ Voltar</Text>
+          </Pressable>
+
+          {isLoading ? (
+            <View style={styles.stateCard}>
+              <ActivityIndicator size='small' color='#38BDF8' />
+              <Text style={styles.stateText}>Carregando lista...</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.stateCard}>
+              <Text style={styles.errorText}>{error}</Text>
+              <Pressable
+                style={styles.retryButton}
+                onPress={() => void reload()}
+                accessibilityRole='button'
+              >
+                <Text style={styles.retryButtonText}>Tentar novamente</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.stateCard}>
+              <Text style={styles.emptyTitle}>
+                {listId == null ? 'Lista inválida' : 'Lista não encontrada'}
+              </Text>
+              <Text style={styles.emptyText}>
+                {listId == null
+                  ? 'O identificador da lista é inválido.'
+                  : 'Ela pode ter sido excluída.'}
+              </Text>
+              <Pressable
+                style={styles.retryButton}
+                onPress={handleGoBack}
+                accessibilityRole='button'
+              >
+                <Text style={styles.retryButtonText}>Voltar</Text>
+              </Pressable>
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar style='light' />
 
-      <ScrollView
-        contentContainerStyle={[
-          styles.content,
-          {
-            paddingTop: insets.top + 16,
-            paddingBottom: insets.bottom + 32,
-          },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        <Pressable
-          style={styles.backButton}
-          onPress={handleGoBack}
-          accessibilityRole='button'
-          accessibilityLabel='Voltar'
-        >
-          <Text style={styles.backButtonText}>‹ Voltar</Text>
-        </Pressable>
-
-        {isLoading ? (
-          <View style={styles.stateCard}>
-            <ActivityIndicator size='small' color='#38BDF8' />
-            <Text style={styles.stateText}>Carregando lista...</Text>
-          </View>
-        ) : error ? (
-          <View style={styles.stateCard}>
-            <Text style={styles.errorText}>{error}</Text>
+      <FlatList
+        data={detail.items}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={({ item }) => (
+          <ListItemRow
+            item={item}
+            isPending={pendingItemId === item.id}
+            onIncrement={handleIncrement}
+            onDecrement={handleDecrement}
+            onRemove={handleRemoveRequest}
+          />
+        )}
+        ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
+        ListHeaderComponent={
+          <View>
             <Pressable
-              style={styles.retryButton}
-              onPress={() => void reload()}
-              accessibilityRole='button'
-            >
-              <Text style={styles.retryButtonText}>Tentar novamente</Text>
-            </Pressable>
-          </View>
-        ) : detail == null ? (
-          <View style={styles.stateCard}>
-            <Text style={styles.emptyTitle}>
-              {listId == null ? 'Lista inválida' : 'Lista não encontrada'}
-            </Text>
-            <Text style={styles.emptyText}>
-              {listId == null
-                ? 'O identificador da lista é inválido.'
-                : 'Ela pode ter sido excluída.'}
-            </Text>
-            <Pressable
-              style={styles.retryButton}
+              style={styles.backButton}
               onPress={handleGoBack}
               accessibilityRole='button'
+              accessibilityLabel='Voltar'
             >
-              <Text style={styles.retryButtonText}>Voltar</Text>
+              <Text style={styles.backButtonText}>‹ Voltar</Text>
             </Pressable>
-          </View>
-        ) : (
-          <>
+
             <Text style={styles.title}>{detail.name}</Text>
             <Text style={styles.subtitle}>{countLabel}</Text>
 
@@ -279,32 +329,26 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
             {actionError ? (
               <Text style={styles.actionErrorText}>{actionError}</Text>
             ) : null}
-
-            {detail.items.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyTitle}>Nenhuma carta nesta lista</Text>
-                <Text style={styles.emptyText}>
-                  Toque em “Adicionar cartas” para escanear e registrar cartas
-                  nesta lista.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.itemsStack}>
-                {detail.items.map((item) => (
-                  <ListItemRow
-                    key={item.id}
-                    item={item}
-                    isPending={pendingItemId === item.id}
-                    onIncrement={() => void handleIncrement(item)}
-                    onDecrement={() => void handleDecrement(item)}
-                    onRemove={() => setItemToRemove(item)}
-                  />
-                ))}
-              </View>
-            )}
-          </>
-        )}
-      </ScrollView>
+          </View>
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Nenhuma carta nesta lista</Text>
+            <Text style={styles.emptyText}>
+              Toque em “Adicionar cartas” para escanear e registrar cartas nesta
+              lista.
+            </Text>
+          </View>
+        }
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: insets.top + 16,
+            paddingBottom: insets.bottom + 32,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+      />
 
       {isRenameOpen && detail ? (
         <ListNameModal
@@ -555,6 +599,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  itemSeparator: {
+    height: 8,
+  },
   emptyCard: {
     borderRadius: 16,
     borderWidth: 1,
@@ -574,8 +621,5 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginTop: 6,
     textAlign: 'center',
-  },
-  itemsStack: {
-    gap: 8,
   },
 });

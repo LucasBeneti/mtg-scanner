@@ -90,13 +90,13 @@ export function AddToListSection({
           <Pressable
             style={[
               styles.stepperButton,
-              (quantity === 1 || isSubmitting) &&
-                styles.stepperButtonDisabled,
+              (quantity === 1 || isSubmitting) && styles.stepperButtonDisabled,
             ]}
             onPress={decrement}
             disabled={quantity === 1 || isSubmitting}
             accessibilityRole='button'
             accessibilityLabel='Diminuir quantidade'
+            hitSlop={8}
           >
             <Text style={styles.stepperButtonText}>−</Text>
           </Pressable>
@@ -113,6 +113,7 @@ export function AddToListSection({
             disabled={quantity === MAX_QUANTITY || isSubmitting}
             accessibilityRole='button'
             accessibilityLabel='Aumentar quantidade'
+            hitSlop={8}
           >
             <Text style={styles.stepperButtonText}>+</Text>
           </Pressable>
