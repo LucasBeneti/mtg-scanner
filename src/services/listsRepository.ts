@@ -60,6 +60,18 @@ interface ListItemRow {
   created_at: number;
 }
 
+export interface ListItemPriceUpdate {
+  itemId: number;
+  currentPriceUsdCents: number | null;
+  priceUpdatedAt: number;
+}
+
+export interface ApplyListPriceRefreshInput {
+  listId: number;
+  updates: ListItemPriceUpdate[];
+  refreshedAt: number | null;
+}
+
 const LIST_SUMMARY_SELECT = `
   SELECT
     l.id,
@@ -487,5 +499,38 @@ export async function removeListItem(itemId: number): Promise<void> {
       now,
       item.list_id,
     );
+  });
+}
+
+/**
+ * Aplica os preços atuais de uma atualização em lote sem tocar no
+ * preço de entrada nem em last_added_at.
+ */
+export async function applyListPriceRefresh({
+  listId,
+  updates,
+  refreshedAt,
+}: ApplyListPriceRefreshInput): Promise<void> {
+  const db = await getDatabase();
+
+  await db.withTransactionAsync(async () => {
+    for (const update of updates) {
+      await db.runAsync(
+        `UPDATE list_items
+         SET current_price_usd_cents = ?, price_updated_at = ?
+         WHERE id = ?`,
+        update.currentPriceUsdCents,
+        update.priceUpdatedAt,
+        update.itemId,
+      );
+    }
+
+    if (refreshedAt != null) {
+      await db.runAsync(
+        'UPDATE lists SET last_refreshed_at = ? WHERE id = ?',
+        refreshedAt,
+        listId,
+      );
+    }
   });
 }

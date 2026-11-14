@@ -28,14 +28,22 @@ export function ListItemRow({
   onRemove,
 }: ListItemRowProps) {
   const [imageFailed, setImageFailed] = useState(false);
-  const imageSource = getCardImageSourceFromUri(
-    item.snapshot.imageUriNormal,
-  );
-  const unitPrice = item.currentPriceUsdCents ?? item.entryPriceUsdCents;
+  const imageSource = getCardImageSourceFromUri(item.snapshot.imageUriNormal);
+  const currentPrice = item.currentPriceUsdCents;
+  const entryPrice = item.entryPriceUsdCents;
+  const effectivePrice = currentPrice ?? entryPrice;
   const lineTotal =
-    unitPrice == null ? null : unitPrice * item.quantity;
-  const displayName =
-    item.snapshot.printedName ?? item.snapshot.name;
+    effectivePrice == null ? null : effectivePrice * item.quantity;
+  const displayName = item.snapshot.printedName ?? item.snapshot.name;
+  const priceLabel =
+    currentPrice != null
+      ? `${formatUsdCents(currentPrice)} / un.`
+      : entryPrice != null
+        ? `${formatUsdCents(entryPrice)} / un. (entrada)`
+        : 'Sem cotação';
+  const showEntryComparison =
+    currentPrice != null && entryPrice != null && currentPrice !== entryPrice;
+  const showNoCurrent = currentPrice == null && entryPrice != null;
 
   return (
     <View style={[styles.card, isPending && styles.cardPending]}>
@@ -67,12 +75,21 @@ export function ListItemRow({
                 {getFinishLabel(item.finish)}
               </Text>
             </View>
-            <Text style={styles.unitPrice}>
-              {unitPrice == null
-                ? 'Sem cotação'
-                : `${formatUsdCents(unitPrice)} / un.`}
-            </Text>
           </View>
+
+          <Text style={styles.unitPrice}>{priceLabel}</Text>
+
+          {showEntryComparison ? (
+            <Text style={styles.entryPrice}>
+              Entrada: {formatUsdCents(entryPrice)} / un.
+            </Text>
+          ) : null}
+
+          {showNoCurrent ? (
+            <Text style={styles.entryPrice}>
+              Sem cotação atual • total usa a entrada
+            </Text>
+          ) : null}
         </View>
       </View>
 
@@ -81,8 +98,7 @@ export function ListItemRow({
           <Pressable
             style={[
               styles.stepperButton,
-              (item.quantity <= 1 || isPending) &&
-                styles.stepperButtonDisabled,
+              (item.quantity <= 1 || isPending) && styles.stepperButtonDisabled,
             ]}
             onPress={onDecrement}
             disabled={item.quantity <= 1 || isPending}
@@ -199,6 +215,13 @@ const styles = StyleSheet.create({
     color: '#CBD5E1',
     fontSize: 11,
     fontWeight: '600',
+    marginTop: 3,
+  },
+  entryPrice: {
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
   },
   footer: {
     flexDirection: 'row',

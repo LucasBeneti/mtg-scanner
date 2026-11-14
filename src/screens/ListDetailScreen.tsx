@@ -21,7 +21,13 @@ import {
   removeListItem,
   renameList,
 } from '../services/listsRepository';
+import {
+  formatPriceRefreshResult,
+  refreshListPrices,
+  type PriceRefreshResult,
+} from '../services/priceRefresh';
 import type { CardListItem } from '../types/list';
+import { formatRelativeUpdateTime } from '../utils/datetime';
 import { formatUsdCents } from '../utils/money';
 
 interface ListDetailScreenProps {
@@ -37,6 +43,15 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
   const [itemToRemove, setItemToRemove] = useState<CardListItem | null>(null);
   const [pendingItemId, setPendingItemId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
+  const [refreshResult, setRefreshResult] = useState<PriceRefreshResult | null>(
+    null,
+  );
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -77,6 +92,33 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
       setActionError('Não foi possível atualizar a quantidade.');
     } finally {
       setPendingItemId(null);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (!detail || isRefreshing || detail.items.length === 0) {
+      return;
+    }
+
+    setIsRefreshing(true);
+    setRefreshProgress({ processed: 0, total: 0 });
+    setRefreshResult(null);
+    setRefreshError(null);
+
+    try {
+      const result = await refreshListPrices(detail.id, detail.items, {
+        onProgress: (processed, total) =>
+          setRefreshProgress({ processed, total }),
+      });
+
+      setRefreshResult(result);
+      await reload();
+    } catch (refreshFailure) {
+      console.warn('[lists] falha ao atualizar preços', refreshFailure);
+      setRefreshError('Não foi possível atualizar os preços.');
+    } finally {
+      setIsRefreshing(false);
+      setRefreshProgress(null);
     }
   };
 
@@ -156,6 +198,44 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
               </Text>
               <Text style={styles.summaryMeta}>{countLabel} nesta lista</Text>
             </View>
+
+            <View style={styles.refreshRow}>
+              <Pressable
+                style={[
+                  styles.refreshButton,
+                  (isRefreshing || detail.items.length === 0) &&
+                    styles.refreshButtonDisabled,
+                ]}
+                onPress={() => void handleRefresh()}
+                disabled={isRefreshing || detail.items.length === 0}
+                accessibilityRole='button'
+                accessibilityLabel='Atualizar preços da lista'
+              >
+                {isRefreshing ? (
+                  <ActivityIndicator size='small' color='#38BDF8' />
+                ) : (
+                  <Text style={styles.refreshButtonText}>Atualizar preços</Text>
+                )}
+              </Pressable>
+
+              <Text style={styles.refreshMeta}>
+                {isRefreshing
+                  ? refreshProgress && refreshProgress.total > 0
+                    ? `Atualizando ${refreshProgress.processed}/${refreshProgress.total}...`
+                    : 'Preparando...'
+                  : formatRelativeUpdateTime(detail.lastRefreshedAt)}
+              </Text>
+            </View>
+
+            {refreshResult ? (
+              <Text style={styles.refreshSummary}>
+                {formatPriceRefreshResult(refreshResult)}
+              </Text>
+            ) : null}
+
+            {refreshError ? (
+              <Text style={styles.refreshErrorText}>{refreshError}</Text>
+            ) : null}
 
             <Pressable
               style={styles.addCardsPrimaryButton}
@@ -338,6 +418,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     marginTop: 4,
+  },
+  refreshRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  refreshButton: {
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.6)',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    minWidth: 138,
+    alignItems: 'center',
+  },
+  refreshButtonDisabled: {
+    opacity: 0.4,
+  },
+  refreshButtonText: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  refreshMeta: {
+    flex: 1,
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'right',
+  },
+  refreshSummary: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  refreshErrorText: {
+    color: '#F87171',
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 10,
   },
   addCardsPrimaryButton: {
     borderRadius: 14,

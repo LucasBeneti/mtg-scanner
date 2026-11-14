@@ -44,6 +44,23 @@ export interface FetchCardResult {
   fromCache: boolean;
 }
 
+export interface CollectionFetchResult {
+  cards: ScryfallCard[];
+  notFoundIds: string[];
+  failedIds: string[];
+}
+
+export interface CollectionFetchOptions {
+  onProgress?: (processed: number, total: number) => void;
+}
+
+interface ScryfallCollectionResponse {
+  data: ScryfallCard[];
+  not_found?: { id?: string }[];
+}
+
+const COLLECTION_BATCH_SIZE = 75;
+
 /**
  * Busca a impressão exata de uma carta na Scryfall por sigla da edição e número do colecionador.
  * Consulta primeiro o cache local SQLite para resposta instantânea e economia de requisições.
@@ -98,6 +115,78 @@ export async function fetchCardBySetAndNumber(
   await setCachedCard(setCode, collectorNumber, card);
 
   return { card, fromCache: false };
+}
+
+/**
+ * Busca os dados atuais de várias cartas pelo endpoint de coleção da Scryfall.
+ * O endpoint aceita até 75 identificadores por request; listas maiores são
+ * divididas em lotes. Falhas de um lote não impedem os demais.
+ */
+export async function fetchCardsByCollection(
+  cardIds: string[],
+  options: CollectionFetchOptions = {},
+): Promise<CollectionFetchResult> {
+  const uniqueIds = Array.from(new Set(cardIds));
+  const result: CollectionFetchResult = {
+    cards: [],
+    notFoundIds: [],
+    failedIds: [],
+  };
+
+  if (uniqueIds.length === 0) {
+    return result;
+  }
+
+  let processed = 0;
+
+  for (
+    let index = 0;
+    index < uniqueIds.length;
+    index += COLLECTION_BATCH_SIZE
+  ) {
+    const batch = uniqueIds.slice(index, index + COLLECTION_BATCH_SIZE);
+
+    await waitForRateLimit();
+
+    try {
+      const response = await fetch(`${SCRYFALL_BASE_URL}/cards/collection`, {
+        method: 'POST',
+        headers: {
+          ...SCRYFALL_HEADERS,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          identifiers: batch.map((id) => ({ id })),
+        }),
+      });
+
+      if (!response.ok) {
+        result.failedIds.push(...batch);
+      } else {
+        const payload = (await response.json()) as ScryfallCollectionResponse;
+
+        result.cards.push(...payload.data);
+
+        for (const missing of payload.not_found ?? []) {
+          if (missing.id) {
+            result.notFoundIds.push(missing.id);
+          }
+        }
+
+        for (const card of payload.data) {
+          await setCachedCard(card.set, card.collector_number, card);
+        }
+      }
+    } catch (error) {
+      console.warn('[scryfall] falha no lote da coleção', error);
+      result.failedIds.push(...batch);
+    } finally {
+      processed += batch.length;
+      options.onProgress?.(processed, uniqueIds.length);
+    }
+  }
+
+  return result;
 }
 
 /**
