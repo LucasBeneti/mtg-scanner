@@ -9,15 +9,13 @@ import type {
   ListSummary,
 } from '../types/list';
 import { buildCardSnapshot, getAvailableFinishes } from '../utils/cardSnapshot';
+import { normalizeListName } from '../utils/listName';
 
-export const MAX_LIST_NAME_LENGTH = 40;
-
-export class InvalidListNameError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InvalidListNameError';
-  }
-}
+export {
+  InvalidListNameError,
+  MAX_LIST_NAME_LENGTH,
+  normalizeListName,
+} from '../utils/listName';
 
 export class ListNotFoundError extends Error {
   constructor(listId: number) {
@@ -85,22 +83,6 @@ const LIST_SUMMARY_SELECT = `
   LEFT JOIN list_items li ON li.list_id = l.id
   GROUP BY l.id
 `;
-
-export function normalizeListName(rawName: string): string {
-  const name = rawName.trim();
-
-  if (!name) {
-    throw new InvalidListNameError('O nome da lista não pode ficar vazio.');
-  }
-
-  if (name.length > MAX_LIST_NAME_LENGTH) {
-    throw new InvalidListNameError(
-      `O nome da lista deve ter no máximo ${MAX_LIST_NAME_LENGTH} caracteres.`,
-    );
-  }
-
-  return name;
-}
 
 function mapListRow(row: ListRow): CardList {
   return {

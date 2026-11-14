@@ -1,12 +1,38 @@
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ListNameModal } from '../components/list/ListNameModal';
+import { ListPreviewCard } from '../components/list/ListPreviewCard';
+import { useListSummaries } from '../hooks/useListSummaries';
+import { createList } from '../services/listsRepository';
 
 export function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { summaries, isLoading, error, reload } = useListSummaries(3);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  const openList = (listId: number) => {
+    router.push({
+      pathname: '/lists/[id]',
+      params: { id: String(listId) },
+    });
+  };
+
+  const handleCreateList = async (name: string) => {
+    const list = await createList(name);
+    setIsCreateModalOpen(false);
+    openList(list.id);
+  };
 
   return (
     <View style={styles.container}>
@@ -35,44 +61,89 @@ export function HomeScreen() {
 
         <Pressable
           style={({ pressed }) => [
-            styles.scanButton,
-            pressed && styles.scanButtonPressed,
+            styles.primaryButton,
+            pressed && styles.primaryButtonPressed,
+          ]}
+          onPress={() => setIsCreateModalOpen(true)}
+          accessibilityRole='button'
+          accessibilityLabel='Criar nova lista'
+        >
+          <Text style={styles.primaryButtonText}>Nova lista</Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.secondaryButton,
+            pressed && styles.secondaryButtonPressed,
           ]}
           onPress={() => router.push('/scan')}
           accessibilityRole='button'
           accessibilityLabel='Escanear cartas sem uma lista'
         >
-          <Text style={styles.scanButtonText}>Escanear agora</Text>
-          <Text style={styles.scanButtonHint}>Consulta rápida, sem lista</Text>
+          <Text style={styles.secondaryButtonText}>Escanear agora</Text>
+          <Text style={styles.secondaryButtonHint}>
+            Consulta rápida, sem lista
+          </Text>
         </Pressable>
-
-        <View style={styles.newListRow}>
-          <Pressable
-            style={[styles.newListButton, styles.newListButtonDisabled]}
-            disabled
-            accessibilityRole='button'
-            accessibilityState={{ disabled: true }}
-            accessibilityLabel='Criar nova lista, disponível em breve'
-          >
-            <Text style={styles.newListButtonText}>Nova lista</Text>
-          </Pressable>
-          <Text style={styles.comingSoonBadge}>EM BREVE</Text>
-        </View>
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Listas recentes</Text>
+          {summaries.length > 0 ? (
+            <Pressable
+              onPress={() => router.push('/lists')}
+              accessibilityRole='button'
+              accessibilityLabel='Ver todas as listas'
+            >
+              <Text style={styles.sectionLink}>Ver todas</Text>
+            </Pressable>
+          ) : null}
         </View>
 
-        <View style={styles.placeholderCard}>
-          <Text style={styles.placeholderTitle}>
-            Suas listas vão aparecer aqui
-          </Text>
-          <Text style={styles.placeholderText}>
-            Na próxima fase você poderá criar listas, escanear cartas para
-            dentro delas e acompanhar os preços.
-          </Text>
-        </View>
+        {isLoading ? (
+          <View style={styles.stateCard}>
+            <ActivityIndicator size='small' color='#38BDF8' />
+            <Text style={styles.stateText}>Carregando listas...</Text>
+          </View>
+        ) : error ? (
+          <View style={styles.stateCard}>
+            <Text style={styles.errorText}>{error}</Text>
+            <Pressable
+              style={styles.retryButton}
+              onPress={() => void reload()}
+              accessibilityRole='button'
+            >
+              <Text style={styles.retryButtonText}>Tentar novamente</Text>
+            </Pressable>
+          </View>
+        ) : summaries.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>Nenhuma lista ainda</Text>
+            <Text style={styles.emptyText}>
+              Crie sua primeira lista para organizar as cartas que você
+              escanear.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.listStack}>
+            {summaries.map((summary) => (
+              <ListPreviewCard
+                key={summary.id}
+                summary={summary}
+                onPress={() => openList(summary.id)}
+              />
+            ))}
+          </View>
+        )}
       </ScrollView>
+
+      {isCreateModalOpen ? (
+        <ListNameModal
+          title='Nova lista'
+          confirmLabel='Criar'
+          onClose={() => setIsCreateModalOpen(false)}
+          onSubmit={handleCreateList}
+        />
+      ) : null}
     </View>
   );
 }
@@ -87,7 +158,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   header: {
-    marginBottom: 28,
+    marginBottom: 24,
   },
   badge: {
     alignSelf: 'flex-start',
@@ -115,54 +186,43 @@ const styles = StyleSheet.create({
     marginTop: 8,
     maxWidth: 320,
   },
-  scanButton: {
+  primaryButton: {
     backgroundColor: '#38BDF8',
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 16,
-    marginBottom: 12,
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  scanButtonPressed: {
+  primaryButtonPressed: {
     opacity: 0.85,
   },
-  scanButtonText: {
+  primaryButtonText: {
     color: '#0F172A',
     fontSize: 16,
     fontWeight: '800',
   },
-  scanButtonHint: {
-    color: 'rgba(15, 23, 42, 0.65)',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 3,
-  },
-  newListRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 32,
-  },
-  newListButton: {
-    flex: 1,
+  secondaryButton: {
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#334155',
-    paddingVertical: 14,
-    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    marginBottom: 28,
   },
-  newListButtonDisabled: {
-    opacity: 0.55,
+  secondaryButtonPressed: {
+    opacity: 0.78,
   },
-  newListButtonText: {
+  secondaryButtonText: {
     color: '#E2E8F0',
     fontSize: 14,
     fontWeight: '700',
   },
-  comingSoonBadge: {
-    color: '#94A3B8',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.6,
+  secondaryButtonHint: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -177,19 +237,58 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  placeholderCard: {
+  sectionLink: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  listStack: {
+    gap: 10,
+  },
+  stateCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#1E293B',
+    padding: 18,
+    alignItems: 'center',
+    gap: 10,
+  },
+  stateText: {
+    color: '#94A3B8',
+    fontSize: 13,
+  },
+  errorText: {
+    color: '#F87171',
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  retryButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#38BDF8',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  retryButtonText: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  emptyCard: {
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#334155',
     backgroundColor: '#1E293B',
     padding: 18,
   },
-  placeholderTitle: {
+  emptyTitle: {
     color: '#F8FAFC',
     fontSize: 15,
     fontWeight: '700',
   },
-  placeholderText: {
+  emptyText: {
     color: '#94A3B8',
     fontSize: 13,
     lineHeight: 19,
