@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const LATEST_DATABASE_VERSION = 1;
+const LATEST_DATABASE_VERSION = 2;
 
 interface Migration {
   version: number;
@@ -53,6 +53,19 @@ const migrations: Migration[] = [
 
         CREATE INDEX IF NOT EXISTS idx_list_items_card_id
           ON list_items(card_id);
+      `);
+    },
+  },
+  {
+    version: 2,
+    up: async (db) => {
+      // Preferências do app e cotações cacheadas. Valores em JSON.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY NOT NULL,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
       `);
     },
   },

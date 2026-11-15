@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useMoney } from '../../hooks/useMoney';
 import type { ListSummary } from '../../types/list';
-import { formatUsdCents } from '../../utils/money';
 
 interface ListPreviewCardProps {
   summary: ListSummary;
@@ -9,12 +9,13 @@ interface ListPreviewCardProps {
 }
 
 export function ListPreviewCard({ summary, onPress }: ListPreviewCardProps) {
+  const { format } = useMoney();
   const countLabel =
     summary.cardCount === 1 ? '1 carta' : `${summary.cardCount} cartas`;
   const meta =
     summary.cardCount === 0
       ? 'Sem cartas'
-      : `${countLabel} • ${formatUsdCents(summary.estimatedValueUsdCents)}`;
+      : `${countLabel} • ${format(summary.estimatedValueUsdCents)}`;
 
   return (
     <Pressable

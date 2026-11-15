@@ -20,9 +20,12 @@ export function parseUsdToCents(
 }
 
 /**
- * Formata centavos em USD no padrão brasileiro: US$ 1.234,56.
+ * Formata centavos com o símbolo informado no padrão brasileiro: R$ 1.234,56.
  */
-export function formatUsdCents(cents: number | null): string {
+export function formatCurrencyCents(
+  cents: number | null,
+  symbol: string,
+): string {
   if (cents == null) return '—';
 
   const absolute = Math.abs(cents);
@@ -31,7 +34,51 @@ export function formatUsdCents(cents: number | null): string {
   const withThousands = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const sign = cents < 0 ? '-' : '';
 
-  return `US$ ${sign}${withThousands},${decimalPart}`;
+  return `${symbol} ${sign}${withThousands},${decimalPart}`;
+}
+
+/**
+ * Formata centavos em USD no padrão brasileiro: US$ 1.234,56.
+ */
+export function formatUsdCents(cents: number | null): string {
+  return formatCurrencyCents(cents, 'US$');
+}
+
+/**
+ * Formata centavos em BRL no padrão brasileiro: R$ 1.234,56.
+ */
+export function formatBrlCents(cents: number | null): string {
+  return formatCurrencyCents(cents, 'R$');
+}
+
+/**
+ * Converte centavos de USD para centavos de BRL usando a taxa em micros.
+ * Arredonda para o centavo mais próximo.
+ */
+export function convertUsdCentsToBrlCents(
+  usdCents: number,
+  rateMicros: number,
+): number {
+  return Math.round((usdCents * rateMicros) / 1_000_000);
+}
+
+/**
+ * Formata a taxa em micros com 4 casas: 5666600 -> "5,6666".
+ */
+export function formatRateMicros(rateMicros: number): string {
+  return (rateMicros / 1_000_000).toFixed(4).replace('.', ',');
+}
+
+/**
+ * Formata a data de referência da cotação (YYYY-MM-DD) como "DD/MM".
+ */
+export function formatRateDate(rateDate: string | null): string | null {
+  if (!rateDate) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(rateDate);
+  if (!match) return null;
+
+  return `${match[3]}/${match[2]}`;
 }
 
 /**

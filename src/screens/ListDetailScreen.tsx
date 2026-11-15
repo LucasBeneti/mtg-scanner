@@ -11,10 +11,13 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { CurrencyToggle } from '../components/CurrencyToggle';
 import { ConfirmDialog } from '../components/list/ConfirmDialog';
 import { ListItemRow } from '../components/list/ListItemRow';
 import { ListNameModal } from '../components/list/ListNameModal';
+import { useFxRate } from '../hooks/useFxRate';
 import { useListDetail } from '../hooks/useListDetail';
+import { useMoney } from '../hooks/useMoney';
 import { track } from '../services/analytics';
 import {
   decrementItemQuantity,
@@ -30,16 +33,23 @@ import {
 } from '../services/priceRefresh';
 import type { CardListItem } from '../types/list';
 import { formatRelativeUpdateTime } from '../utils/datetime';
-import { formatUsdCents } from '../utils/money';
+import { formatRateDate, formatRateMicros } from '../utils/money';
 
 interface ListDetailScreenProps {
   listId: number | null;
+}
+
+/** "Atualizado há 3h" -> "há 3h", para compor a linha da cotação. */
+function rateAgeLabel(fetchedAt: number): string {
+  return formatRelativeUpdateTime(fetchedAt).replace('Atualizado ', '');
 }
 
 export function ListDetailScreen({ listId }: ListDetailScreenProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { detail, isLoading, error, reload } = useListDetail(listId);
+  const { format } = useMoney();
+  const fx = useFxRate();
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [itemToRemove, setItemToRemove] = useState<CardListItem | null>(null);
@@ -186,6 +196,14 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
         ? '1 carta'
         : `${detail.cardCount} cartas`;
 
+  const rateReference = fx.rate ? formatRateDate(fx.rate.rateDate) : null;
+  const rateMeta = fx.rate
+    ? `R$ ${formatRateMicros(fx.rate.rateMicros)} · ${
+        rateReference ? `ref. ${rateReference}` : rateAgeLabel(fx.rate.fetchedAt)
+      }${fx.isStale ? ' (desatualizada)' : ''}`
+    : null;
+  const canToggleCurrency = fx.isAvailable || fx.error == null;
+
   if (isLoading || error || detail == null) {
     return (
       <View style={styles.container}>
@@ -283,9 +301,57 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
             <View style={styles.summaryCard}>
               <Text style={styles.summaryLabel}>VALOR ESTIMADO</Text>
               <Text style={styles.summaryValue}>
-                {formatUsdCents(detail.estimatedValueUsdCents)}
+                {format(detail.estimatedValueUsdCents)}
               </Text>
               <Text style={styles.summaryMeta}>{countLabel} nesta lista</Text>
+
+              <View style={styles.currencyRow}>
+                <CurrencyToggle
+                  value={fx.currency}
+                  onChange={fx.setCurrency}
+                  disabled={!canToggleCurrency}
+                  isLoading={fx.isLoading}
+                />
+              </View>
+
+              {fx.currency === 'BRL' && rateMeta ? (
+                <>
+                  <View style={styles.rateRow}>
+                    <Text style={styles.rateMeta}>{rateMeta}</Text>
+                    <Pressable
+                      style={styles.rateRefreshButton}
+                      onPress={() => void fx.refresh()}
+                      disabled={fx.isRefreshing}
+                      accessibilityRole='button'
+                      accessibilityLabel='Atualizar cotação'
+                      hitSlop={6}
+                    >
+                      {fx.isRefreshing ? (
+                        <ActivityIndicator size='small' color='#38BDF8' />
+                      ) : (
+                        <Text style={styles.rateRefreshText}>Atualizar</Text>
+                      )}
+                    </Pressable>
+                  </View>
+                  <Text style={styles.rateDisclaimer}>
+                    Conversão de referência · não inclui IOF
+                  </Text>
+                </>
+              ) : null}
+
+              {!fx.isAvailable && fx.error ? (
+                <View style={styles.rateErrorRow}>
+                  <Text style={styles.rateErrorText}>{fx.error}</Text>
+                  <Pressable
+                    onPress={() => fx.setCurrency('BRL')}
+                    accessibilityRole='button'
+                    accessibilityLabel='Tentar buscar a cotação novamente'
+                    hitSlop={6}
+                  >
+                    <Text style={styles.rateRetryText}>Tentar novamente</Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
 
             <View style={styles.refreshRow}>
@@ -518,6 +584,58 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     marginTop: 4,
+  },
+  currencyRow: {
+    marginTop: 14,
+  },
+  rateRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 12,
+  },
+  rateMeta: {
+    flex: 1,
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  rateRefreshButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  rateRefreshText: {
+    color: '#38BDF8',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  rateDisclaimer: {
+    alignSelf: 'stretch',
+    color: '#64748B',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  rateErrorRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 10,
+  },
+  rateErrorText: {
+    color: '#F87171',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  rateRetryText: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '800',
   },
   refreshRow: {
     flexDirection: 'row',

@@ -12,12 +12,13 @@ import {
 } from 'react-native';
 import type { ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useMoney } from '../hooks/useMoney';
 import { track } from '../services/analytics';
 import { getCardImageSource } from '../services/scryfall';
 import type { ScryfallCard } from '../types/card';
 import type { CardFinish } from '../types/list';
 import { getAvailableFinishes } from '../utils/cardSnapshot';
-import { formatUsdCents, parseUsdToCents } from '../utils/money';
+import { parseUsdToCents } from '../utils/money';
 import { AddToListSection } from './list/AddToListSection';
 
 /*
@@ -107,6 +108,7 @@ export function CardResultSheet({
 }: CardResultSheetProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
+  const { format } = useMoney();
 
   const [finishSelection, setFinishSelection] = useState<{
     cardId: string | null;
@@ -341,7 +343,9 @@ export function CardResultSheet({
             <Text style={styles.peekMeta} numberOfLines={1}>
               {card.set.toUpperCase()} #{card.collector_number} •{' '}
               {activeFinish.label} •{' '}
-              {activeFinish.usd ? `US$ ${activeFinish.usd}` : 'Sem cotação'}
+              {activeFinish.usd
+                ? format(parseUsdToCents(activeFinish.usd))
+                : 'Sem cotação'}
             </Text>
           </View>
 
@@ -449,7 +453,9 @@ export function CardResultSheet({
               Cotação Scryfall ({activeFinish.label})
             </Text>
             <Text style={styles.mainPriceValue}>
-              {activeFinish.usd ? `US$ ${activeFinish.usd}` : 'Sem cotação'}
+              {activeFinish.usd
+                ? format(parseUsdToCents(activeFinish.usd))
+                : 'Sem cotação'}
             </Text>
             {activeFinish.eur ? (
               <Text style={styles.secondaryPriceValue}>
@@ -482,7 +488,7 @@ export function CardResultSheet({
                   accessibilityRole='button'
                   accessibilityLabel={`${item.label}, ${
                     item.usd
-                      ? formatUsdCents(parseUsdToCents(item.usd))
+                      ? format(parseUsdToCents(item.usd))
                       : 'sem cotação'
                   }`}
                   accessibilityState={{
@@ -504,12 +510,14 @@ export function CardResultSheet({
                     {item.label}
                   </Text>
                   <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
                     style={[
                       styles.finishCardPrice,
                       isSelected && styles.finishCardPriceSelected,
                     ]}
                   >
-                    {item.usd ? `$${item.usd}` : '—'}
+                    {item.usd ? format(parseUsdToCents(item.usd)) : '—'}
                   </Text>
                 </Pressable>
               );
@@ -523,7 +531,7 @@ export function CardResultSheet({
               finishLabel={activeFinish.label}
               unitPriceLabel={
                 activeFinish.usd
-                  ? formatUsdCents(parseUsdToCents(activeFinish.usd))
+                  ? format(parseUsdToCents(activeFinish.usd))
                   : 'Sem cotação'
               }
               existingQuantity={existingQuantities?.[activeFinish.key] ?? 0}

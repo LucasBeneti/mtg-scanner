@@ -7,10 +7,10 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useMoney } from '../../hooks/useMoney';
 import { getCardImageSourceFromUri } from '../../services/scryfall';
 import type { CardListItem } from '../../types/list';
 import { getFinishLabel } from '../../utils/finish';
-import { formatUsdCents } from '../../utils/money';
 
 interface ListItemRowProps {
   item: CardListItem;
@@ -28,19 +28,19 @@ export const ListItemRow = React.memo(function ListItemRow({
   onRemove,
 }: ListItemRowProps) {
   const [imageFailed, setImageFailed] = useState(false);
+  const { format, formatLineTotal } = useMoney();
   const imageSource = getCardImageSourceFromUri(item.snapshot.imageUriNormal);
   const currentPrice = item.currentPriceUsdCents;
   const entryPrice = item.entryPriceUsdCents;
   const effectivePrice = currentPrice ?? entryPrice;
-  const lineTotal =
-    effectivePrice == null ? null : effectivePrice * item.quantity;
   const displayName = item.snapshot.printedName ?? item.snapshot.name;
   const priceLabel =
     currentPrice != null
-      ? `${formatUsdCents(currentPrice)} / un.`
+      ? `${format(currentPrice)} / un.`
       : entryPrice != null
-        ? `${formatUsdCents(entryPrice)} / un. (entrada)`
+        ? `${format(entryPrice)} / un. (entrada)`
         : 'Sem cotação';
+  const lineTotalLabel = formatLineTotal(effectivePrice, item.quantity);
   const showEntryComparison =
     currentPrice != null && entryPrice != null && currentPrice !== entryPrice;
   const showNoCurrent = currentPrice == null && entryPrice != null;
@@ -81,7 +81,7 @@ export const ListItemRow = React.memo(function ListItemRow({
 
           {showEntryComparison ? (
             <Text style={styles.entryPrice}>
-              Entrada: {formatUsdCents(entryPrice)} / un.
+              Entrada: {format(entryPrice)} / un.
             </Text>
           ) : null}
 
@@ -128,9 +128,7 @@ export const ListItemRow = React.memo(function ListItemRow({
 
         <View style={styles.totalBox}>
           <Text style={styles.totalLabel}>Total</Text>
-          <Text style={styles.totalValue}>
-            {lineTotal == null ? '—' : formatUsdCents(lineTotal)}
-          </Text>
+          <Text style={styles.totalValue}>{lineTotalLabel}</Text>
         </View>
 
         {isPending ? (

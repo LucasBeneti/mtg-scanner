@@ -6,6 +6,7 @@ import {
   SafeAreaProvider,
   initialWindowMetrics,
 } from 'react-native-safe-area-context';
+import { FxRateProvider } from '../hooks/useFxRate';
 import {
   posthog,
   screen,
@@ -55,14 +56,16 @@ export default function RootLayout() {
       autocapture={{ captureScreens: false, captureTouches: false }}
     >
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
-        <StatusBar style="light" />
-        <AnalyticsScreens />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: '#0F172A' },
-          }}
-        />
+        <FxRateProvider>
+          <StatusBar style="light" />
+          <AnalyticsScreens />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: '#0F172A' },
+            }}
+          />
+        </FxRateProvider>
       </SafeAreaProvider>
     </PostHogProvider>
   );
