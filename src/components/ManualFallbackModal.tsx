@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { track } from '../services/analytics';
 import { parseManualInput } from '../services/collectorParser';
 import type { ParsedCollectorInfo } from '../types/card';
 
@@ -33,11 +34,13 @@ export function ManualFallbackModal({
   const handleConfirm = () => {
     const parsed = parseManualInput(inputValue);
     if (!parsed) {
+      track('manual entry rejected', { error_kind: 'invalid_format' });
       setValidationError(
         'Digite a sigla da edição (3-4 letras) e o número. Ex: FDN 125 ou BLB 64'
       );
       return;
     }
+    track('manual entry submitted', { valid: true });
     setValidationError(null);
     setInputValue('');
     onSubmit(parsed);

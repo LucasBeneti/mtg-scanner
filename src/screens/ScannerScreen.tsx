@@ -29,6 +29,8 @@ import {
   getCardPeekHeight,
 } from '../components/CardResultSheet';
 import { ManualFallbackModal } from '../components/ManualFallbackModal';
+import { useScannerAnalytics } from '../hooks/useScannerAnalytics';
+import { track } from '../services/analytics';
 import { makeCacheKey } from '../services/cardCache';
 import { parseCollectorOcrText } from '../services/collectorParser';
 import {
@@ -45,6 +47,7 @@ import {
 } from '../services/scryfall';
 import type { ParsedCollectorInfo } from '../types/card';
 import type { CardFinish, CardList } from '../types/list';
+import { getAvailableFinishes } from '../utils/cardSnapshot';
 import { getUsdPriceCentsForFinish } from '../utils/money';
 
 /** Intervalo entre capturas automáticas para o OCR (em ms) */
@@ -55,6 +58,24 @@ const REQUIRED_CONFIRMATIONS = 2;
 const EMPTY_SCANS_BEFORE_HINT = 7;
 /** Tempo mínimo antes de tentar de novo um código que acabou de falhar */
 const FAILED_LOOKUP_COOLDOWN_MS = 10_000;
+
+function getLookupErrorKind(
+  error: unknown,
+): 'not_found' | 'rate_limited' | 'network' | 'http_error' {
+  if (!(error instanceof ScryfallError)) {
+    return 'network';
+  }
+
+  if (error.status === 404) {
+    return 'not_found';
+  }
+
+  if (error.status === 429) {
+    return 'rate_limited';
+  }
+
+  return 'http_error';
+}
 
 interface OcrDebugSnapshot {
   croppedUri: string;
@@ -120,6 +141,21 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
     null,
   );
   const [addedToast, setAddedToast] = useState<AddedToastState | null>(null);
+
+  const {
+    recordScanAttempt,
+    recordOcrError,
+    recordCodeDetected,
+    recordLookupSucceeded,
+    recordLookupFailed,
+    recordManualEntry,
+    recordCardAdded,
+    recordCardSkipped,
+    recordTorchUsed,
+  } = useScannerAnalytics({
+    mode: activeListId != null ? 'list' : 'quick',
+    listId: activeListId,
+  });
 
   const isProcessingFrameRef = useRef(false);
   const scanCountRef = useRef(0);
@@ -239,8 +275,9 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
   }, [addedToast]);
 
   const lookupCardInScryfall = useCallback(
-    async (parsed: ParsedCollectorInfo) => {
+    async (parsed: ParsedCollectorInfo, source: 'auto' | 'manual') => {
       const key = makeCacheKey(parsed.setCode, parsed.collectorNumber);
+      const startedAt = Date.now();
 
       setAddedToast(null);
       setIsFetchingScryfall(true);
@@ -251,13 +288,45 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
           parsed.setCode,
           parsed.collectorNumber,
         );
+        const card = result.card;
+
         setLastReadResult(result);
         setSheetExpanded(true);
         setEmptyScanCount(0);
         lastReadKeyRef.current = key;
         failedKeyRef.current = null;
         failedAtRef.current = 0;
+
+        recordLookupSucceeded();
+        track('scan lookup succeeded', {
+          source,
+          from_cache: result.fromCache,
+          latency_ms: Date.now() - startedAt,
+          set_code: parsed.setCode,
+          collector_number: parsed.collectorNumber,
+          has_usd_price: Boolean(
+            card.prices.usd || card.prices.usd_foil || card.prices.usd_etched,
+          ),
+          finish_count: getAvailableFinishes(card).length,
+        });
+        track('card sheet expanded', {
+          source,
+          from_cache: result.fromCache,
+        });
       } catch (err) {
+        const httpStatus =
+          err instanceof ScryfallError ? (err.status ?? null) : null;
+
+        recordLookupFailed();
+        track('scan lookup failed', {
+          source,
+          error_kind: getLookupErrorKind(err),
+          http_status: httpStatus,
+          latency_ms: Date.now() - startedAt,
+          set_code: parsed.setCode,
+          collector_number: parsed.collectorNumber,
+        });
+
         if (err instanceof ScryfallError) {
           setScryfallError(err.message);
         } else {
@@ -271,7 +340,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
         setIsFetchingScryfall(false);
       }
     },
-    [],
+    [recordLookupFailed, recordLookupSucceeded],
   );
 
   const handleAddToList = useCallback(
@@ -282,6 +351,12 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
 
       const card = lastReadResult.card;
       const entryPriceUsdCents = getUsdPriceCentsForFinish(card, finish);
+      const existingQuantity =
+        existingItems &&
+        existingItems.listId === activeList.id &&
+        existingItems.cardId === card.id
+          ? existingItems.quantities[finish]
+          : 0;
 
       try {
         await addCardToList({
@@ -293,6 +368,12 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
           now: Date.now(),
         });
       } catch (error) {
+        track('card add failed', {
+          list_id: activeList.id,
+          error_kind:
+            error instanceof ListNotFoundError ? 'list_not_found' : 'unknown',
+        });
+
         if (error instanceof ListNotFoundError) {
           setActiveList(null);
           setListModeError(
@@ -301,6 +382,17 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
         }
         throw error;
       }
+
+      recordCardAdded();
+      track('card added to list', {
+        list_id: activeList.id,
+        set_code: card.set,
+        collector_number: card.collector_number,
+        finish,
+        quantity,
+        was_already_in_list: existingQuantity > 0,
+        has_entry_price: entryPriceUsdCents != null,
+      });
 
       setExistingItems((current) => {
         if (
@@ -332,7 +424,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
         listName: activeList.name,
       });
     },
-    [activeList, lastReadResult],
+    [activeList, existingItems, lastReadResult, recordCardAdded],
   );
 
   const handleViewAddedList = () => {
@@ -396,6 +488,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
 
       // 4. Extrai { setCode, collectorNumber } e aplica buffer de confirmação em 2 leituras
       const parsed = parseCollectorOcrText(ocrResult.text);
+      recordScanAttempt(parsed);
       let currentStreak = 0;
 
       if (parsed) {
@@ -411,6 +504,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
 
         if (currentStreak >= REQUIRED_CONFIRMATIONS) {
           setConfirmedCardInfo(parsed);
+          recordCodeDetected(parsed, currentStreak, torchOn);
           lastCandidateKeyRef.current = null;
           streakCountRef.current = 0;
 
@@ -421,7 +515,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
             Date.now() - failedAtRef.current < FAILED_LOOKUP_COOLDOWN_MS;
 
           if (!isSameAsLastRead && !isInFailedCooldown) {
-            void lookupCardInScryfall(parsed);
+            void lookupCardInScryfall(parsed, 'auto');
           }
         }
       } else {
@@ -442,6 +536,8 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
       });
     } catch (err) {
       scanCountRef.current += 1;
+      recordScanAttempt(null);
+      recordOcrError();
       setDebugSnapshot((prev) => ({
         croppedUri: prev?.croppedUri ?? '',
         rawText: prev?.rawText ?? '',
@@ -458,7 +554,16 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
     } finally {
       isProcessingFrameRef.current = false;
     }
-  }, [isCameraConfigured, isLoopBlocked, photoOutput, lookupCardInScryfall]);
+  }, [
+    isCameraConfigured,
+    isLoopBlocked,
+    photoOutput,
+    lookupCardInScryfall,
+    recordCodeDetected,
+    recordOcrError,
+    recordScanAttempt,
+    torchOn,
+  ]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -530,6 +635,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
     (debugSnapshot?.confirmationCount ?? 0) >= REQUIRED_CONFIRMATIONS;
 
   const toggleTorch = () => {
+    recordTorchUsed();
     setHasToggledTorch(true);
     setTorchOn((v) => !v);
   };
@@ -550,7 +656,31 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
   };
 
   const handleExpandResultSheet = () => {
+    track('card sheet expanded', {
+      source: 'peek',
+      from_cache: lastReadResult?.fromCache ?? false,
+    });
     setSheetExpanded(true);
+  };
+
+  const handleSkipCard = () => {
+    if (activeList && lastReadResult) {
+      track('card skipped', {
+        list_id: activeList.id,
+        set_code: lastReadResult.card.set,
+      });
+      recordCardSkipped();
+    }
+
+    handleCollapseResultSheet();
+  };
+
+  const openManualEntry = (source: 'banner' | 'button') => {
+    track('manual entry opened', {
+      source,
+      reason: scryfallError ? 'lookup_error' : 'ocr_hint',
+    });
+    setManualModalVisible(true);
   };
 
   const isCameraActive =
@@ -755,7 +885,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
       !sheetExpanded ? (
         <Pressable
           style={[styles.fallbackBanner, { bottom: fallbackBannerBottom }]}
-          onPress={() => setManualModalVisible(true)}
+          onPress={() => openManualEntry('banner')}
         >
           <Text style={styles.fallbackBannerTitle}>
             {scryfallError ?? 'Dificuldade para ler o código automaticamente?'}
@@ -786,7 +916,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
 
         <Pressable
           style={styles.manualEntryButton}
-          onPress={() => setManualModalVisible(true)}
+          onPress={() => openManualEntry('button')}
         >
           <Text style={styles.manualEntryButtonText}>Digitar Código</Text>
         </Pressable>
@@ -816,7 +946,7 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
         activeListName={activeList?.name ?? null}
         existingQuantities={existingQuantitiesForCard}
         onAddToList={handleAddToList}
-        onSkipCard={handleCollapseResultSheet}
+        onSkipCard={handleSkipCard}
       />
 
       {/* Modal de Fallback Manual */}
@@ -827,7 +957,8 @@ export function ScannerScreen({ activeListId = null }: ScannerScreenProps) {
         onSubmit={(parsed) => {
           setManualModalVisible(false);
           setConfirmedCardInfo(parsed);
-          void lookupCardInScryfall(parsed);
+          recordManualEntry();
+          void lookupCardInScryfall(parsed, 'manual');
         }}
       />
     </View>

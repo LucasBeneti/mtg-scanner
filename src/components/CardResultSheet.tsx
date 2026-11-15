@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import type { ScrollViewInstance } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { track } from '../services/analytics';
 import { getCardImageSource } from '../services/scryfall';
 import type { ScryfallCard } from '../types/card';
 import type { CardFinish } from '../types/list';
@@ -467,12 +468,16 @@ export function CardResultSheet({
               return (
                 <Pressable
                   key={item.key}
-                  onPress={() =>
+                  onPress={() => {
+                    track('card finish selected', {
+                      finish: item.key,
+                      has_price: Boolean(item.usd),
+                    });
                     setFinishSelection({
                       cardId: card.id,
                       finish: item.key,
-                    })
-                  }
+                    });
+                  }}
                   disabled={!item.available}
                   accessibilityRole='button'
                   accessibilityLabel={`${item.label}, ${

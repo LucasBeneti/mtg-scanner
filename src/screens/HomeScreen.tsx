@@ -13,7 +13,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ListNameModal } from '../components/list/ListNameModal';
 import { ListPreviewCard } from '../components/list/ListPreviewCard';
 import { useListSummaries } from '../hooks/useListSummaries';
+import { track } from '../services/analytics';
 import { createList } from '../services/listsRepository';
+import type { ListSummary } from '../types/list';
 
 export function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -21,11 +23,23 @@ export function HomeScreen() {
   const { summaries, isLoading, error, reload } = useListSummaries(3);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  const openList = (listId: number) => {
+  const openList = (summary: ListSummary) => {
+    track('list opened', {
+      list_id: summary.id,
+      source: 'home',
+      card_count: summary.cardCount,
+      estimated_value_usd_cents: summary.estimatedValueUsdCents,
+    });
+
     router.push({
       pathname: '/lists/[id]',
-      params: { id: String(listId) },
+      params: { id: String(summary.id) },
     });
+  };
+
+  const openScanner = () => {
+    track('scanner opened', { source: 'home_secondary', list_id: null });
+    router.push('/scan');
   };
 
   const openScannerForList = (listId: number) => {
@@ -37,6 +51,8 @@ export function HomeScreen() {
 
   const handleCreateList = async (name: string) => {
     const list = await createList(name);
+    track('list created');
+    track('scanner opened', { source: 'home_primary', list_id: list.id });
     setIsCreateModalOpen(false);
     openScannerForList(list.id);
   };
@@ -83,7 +99,7 @@ export function HomeScreen() {
             styles.secondaryButton,
             pressed && styles.secondaryButtonPressed,
           ]}
-          onPress={() => router.push('/scan')}
+          onPress={openScanner}
           accessibilityRole='button'
           accessibilityLabel='Escanear cartas sem uma lista'
         >
@@ -136,7 +152,7 @@ export function HomeScreen() {
               <ListPreviewCard
                 key={summary.id}
                 summary={summary}
-                onPress={() => openList(summary.id)}
+                onPress={() => openList(summary)}
               />
             ))}
           </View>

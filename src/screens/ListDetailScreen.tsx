@@ -15,6 +15,7 @@ import { ConfirmDialog } from '../components/list/ConfirmDialog';
 import { ListItemRow } from '../components/list/ListItemRow';
 import { ListNameModal } from '../components/list/ListNameModal';
 import { useListDetail } from '../hooks/useListDetail';
+import { track } from '../services/analytics';
 import {
   decrementItemQuantity,
   deleteList,
@@ -71,6 +72,16 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
 
       try {
         await incrementItemQuantity(itemId);
+
+        const item = detail?.items.find((candidate) => candidate.id === itemId);
+        if (item) {
+          track('list item quantity changed', {
+            direction: 'increment',
+            finish: item.finish,
+            quantity_before: item.quantity,
+          });
+        }
+
         await reload();
       } catch (updateError) {
         console.warn('[lists] falha ao aumentar quantidade', updateError);
@@ -79,7 +90,7 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
         setPendingItemId(null);
       }
     },
-    [pendingItemId, reload],
+    [detail, pendingItemId, reload],
   );
 
   const handleDecrement = useCallback(
@@ -91,6 +102,16 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
 
       try {
         await decrementItemQuantity(itemId);
+
+        const item = detail?.items.find((candidate) => candidate.id === itemId);
+        if (item) {
+          track('list item quantity changed', {
+            direction: 'decrement',
+            finish: item.finish,
+            quantity_before: item.quantity,
+          });
+        }
+
         await reload();
       } catch (updateError) {
         console.warn('[lists] falha ao diminuir quantidade', updateError);
@@ -99,7 +120,7 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
         setPendingItemId(null);
       }
     },
-    [pendingItemId, reload],
+    [detail, pendingItemId, reload],
   );
 
   const handleRemoveRequest = useCallback(
@@ -123,6 +144,8 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
     setRefreshResult(null);
     setRefreshError(null);
 
+    const startedAt = Date.now();
+
     try {
       const result = await refreshListPrices(detail.id, detail.items, {
         onProgress: (processed, total) =>
@@ -130,9 +153,25 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
       });
 
       setRefreshResult(result);
+
+      track('prices refreshed', {
+        list_id: detail.id,
+        item_count: detail.items.length,
+        updated_count: result.updatedCount,
+        no_price_count: result.noPriceCount,
+        not_found_count: result.notFoundCount,
+        failed_count: result.failedCount,
+        duration_ms: Date.now() - startedAt,
+      });
+
       await reload();
     } catch (refreshFailure) {
       console.warn('[lists] falha ao atualizar preços', refreshFailure);
+      track('prices refresh failed', {
+        list_id: detail.id,
+        item_count: detail.items.length,
+        error_kind: 'unknown',
+      });
       setRefreshError('Não foi possível atualizar os preços.');
     } finally {
       setIsRefreshing(false);
@@ -289,12 +328,16 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
 
             <Pressable
               style={styles.addCardsPrimaryButton}
-              onPress={() =>
+              onPress={() => {
+                track('scanner opened', {
+                  source: 'list_detail',
+                  list_id: detail.id,
+                });
                 router.push({
                   pathname: '/scan',
                   params: { listId: String(detail.id) },
-                })
-              }
+                });
+              }}
               accessibilityRole='button'
               accessibilityLabel='Adicionar cartas a esta lista'
             >
@@ -358,6 +401,7 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
           onClose={() => setIsRenameOpen(false)}
           onSubmit={async (name) => {
             await renameList(detail.id, name);
+            track('list renamed', { list_id: detail.id });
             setIsRenameOpen(false);
             await reload();
           }}
@@ -373,6 +417,14 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
           onCancel={() => setIsDeleteOpen(false)}
           onConfirm={async () => {
             await deleteList(detail.id);
+            track('list deleted', {
+              list_id: detail.id,
+              card_count: detail.cardCount,
+              age_days: Math.max(
+                0,
+                Math.floor((Date.now() - detail.createdAt) / 86_400_000),
+              ),
+            });
             handleGoBack();
           }}
         />
@@ -391,6 +443,10 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
           onCancel={() => setItemToRemove(null)}
           onConfirm={async () => {
             await removeListItem(itemToRemove.id);
+            track('list item removed', {
+              finish: itemToRemove.finish,
+              quantity: itemToRemove.quantity,
+            });
             setItemToRemove(null);
             setActionError(null);
             await reload();

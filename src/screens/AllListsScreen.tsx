@@ -12,11 +12,27 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ListPreviewCard } from '../components/list/ListPreviewCard';
 import { useListSummaries } from '../hooks/useListSummaries';
+import { track } from '../services/analytics';
+import type { ListSummary } from '../types/list';
 
 export function AllListsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { summaries, isLoading, error, reload } = useListSummaries();
+
+  const openList = (summary: ListSummary) => {
+    track('list opened', {
+      list_id: summary.id,
+      source: 'all_lists',
+      card_count: summary.cardCount,
+      estimated_value_usd_cents: summary.estimatedValueUsdCents,
+    });
+
+    router.push({
+      pathname: '/lists/[id]',
+      params: { id: String(summary.id) },
+    });
+  };
 
   const handleGoBack = () => {
     if (router.canGoBack()) {
@@ -85,12 +101,7 @@ export function AllListsScreen() {
               <ListPreviewCard
                 key={summary.id}
                 summary={summary}
-                onPress={() =>
-                  router.push({
-                    pathname: '/lists/[id]',
-                    params: { id: String(summary.id) },
-                  })
-                }
+                onPress={() => openList(summary)}
               />
             ))}
           </View>
