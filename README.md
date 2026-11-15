@@ -31,6 +31,25 @@ Aplicativo mobile (Android-first, preparado para iOS) para identificar cartas de
 
 ---
 
+## Observabilidade (PostHog)
+
+- Analytics anônimo via `posthog-react-native`, enviado direto para o PostHog Cloud (US) — sem backend próprio.
+- Configuração em `.env.local` (modelo em `.env.example`):
+
+  ```bash
+  EXPO_PUBLIC_POSTHOG_API_KEY=phc_...
+  EXPO_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+  EXPO_PUBLIC_POSTHOG_DEV=0
+  ```
+
+- `EXPO_PUBLIC_POSTHOG_DEV=1` libera o envio em desenvolvimento. Sem isso, builds de dev não enviam nada.
+- A Project API Key `phc_...` é pública e write-only: pode ficar no bundle. Nunca use uma Personal API Key.
+- O wrapper fica em `src/services/analytics.ts`. Importe `track`/`screen` de lá; não importe `posthog-react-native` direto nas telas.
+- Session replay grava apenas telas fora do scanner e em ~20% dos launches; a câmera é sempre excluída. Requer "Record user sessions" ligado no projeto do PostHog.
+- `posthog-react-native` e `@posthog/react-native-plugin` têm código nativo: após instalar, rode `npx expo run:android` de novo.
+
+---
+
 ## Pré-requisitos (Mac)
 
 - Node LTS (20+)
