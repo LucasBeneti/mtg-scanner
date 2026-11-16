@@ -29,3 +29,18 @@ export function formatRelativeUpdateTime(
   const days = Math.floor(hours / 24);
   return `Atualizado há ${days}d`;
 }
+
+/**
+ * Formata um timestamp como data curta no padrão brasileiro: "15/11/2026".
+ */
+export function formatShortDate(timestamp: number | null): string | null {
+  if (timestamp == null) {
+    return null;
+  }
+
+  const date = new Date(timestamp);
+  const day = date.getDate().toString().padStart(2, '0');
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+
+  return `${day}/${month}/${date.getFullYear()}`;
+}

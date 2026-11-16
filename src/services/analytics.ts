@@ -169,6 +169,17 @@ export interface AnalyticsEvents {
     finish: 'normal' | 'foil' | 'etched';
     quantity: number;
   };
+  'list item price overridden': {
+    list_id: number;
+    finish: 'normal' | 'foil' | 'etched';
+    had_override: boolean;
+    has_note: boolean;
+    price_delta_cents: number | null;
+  };
+  'list item price override cleared': {
+    list_id: number;
+    finish: 'normal' | 'foil' | 'etched';
+  };
 }
 
 /**
@@ -180,10 +191,7 @@ export function track<K extends keyof AnalyticsEvents>(
   props?: AnalyticsEvents[K],
 ): void {
   try {
-    posthog.capture(
-      event,
-      props ? (props as AnalyticsEventProps) : undefined,
-    );
+    posthog.capture(event, props ? (props as AnalyticsEventProps) : undefined);
   } catch {
     // Falha de analytics é silenciosa por design.
   }

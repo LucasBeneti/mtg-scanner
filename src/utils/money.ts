@@ -63,6 +63,21 @@ export function convertUsdCentsToBrlCents(
 }
 
 /**
+ * Converte centavos de BRL para centavos de USD usando a taxa em micros.
+ * Arredonda para o centavo mais próximo. Como o centavo de USD vale vários
+ * centavos de BRL, o valor em R$ pode voltar alguns centavos diferente do
+ * digitado — o preço canônico do app é sempre em USD.
+ */
+export function convertBrlCentsToUsdCents(
+  brlCents: number,
+  rateMicros: number,
+): number {
+  if (rateMicros <= 0) return 0;
+
+  return Math.round((brlCents * 1_000_000) / rateMicros);
+}
+
+/**
  * Formata a taxa em micros com 4 casas: 5666600 -> "5,6666".
  */
 export function formatRateMicros(rateMicros: number): string {

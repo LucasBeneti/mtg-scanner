@@ -15,16 +15,19 @@ import { CurrencyToggle } from '../components/CurrencyToggle';
 import { ConfirmDialog } from '../components/list/ConfirmDialog';
 import { ListItemRow } from '../components/list/ListItemRow';
 import { ListNameModal } from '../components/list/ListNameModal';
+import { PriceOverrideModal } from '../components/list/PriceOverrideModal';
 import { useFxRate } from '../hooks/useFxRate';
 import { useListDetail } from '../hooks/useListDetail';
 import { useMoney } from '../hooks/useMoney';
 import { track } from '../services/analytics';
 import {
+  clearItemPriceOverride,
   decrementItemQuantity,
   deleteList,
   incrementItemQuantity,
   removeListItem,
   renameList,
+  setItemPriceOverride,
 } from '../services/listsRepository';
 import {
   formatPriceRefreshResult,
@@ -53,6 +56,11 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
   const [isRenameOpen, setIsRenameOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [itemToRemove, setItemToRemove] = useState<CardListItem | null>(null);
+  const [itemToEditPrice, setItemToEditPrice] = useState<CardListItem | null>(
+    null,
+  );
+  const [itemToClearOverride, setItemToClearOverride] =
+    useState<CardListItem | null>(null);
   const [pendingItemId, setPendingItemId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -144,6 +152,17 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
     [detail],
   );
 
+  const handleEditPriceRequest = useCallback(
+    (itemId: number) => {
+      const item = detail?.items.find((candidate) => candidate.id === itemId);
+
+      if (item) {
+        setItemToEditPrice(item);
+      }
+    },
+    [detail],
+  );
+
   const handleRefresh = async () => {
     if (!detail || isRefreshing || detail.items.length === 0) {
       return;
@@ -199,7 +218,9 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
   const rateReference = fx.rate ? formatRateDate(fx.rate.rateDate) : null;
   const rateMeta = fx.rate
     ? `R$ ${formatRateMicros(fx.rate.rateMicros)} · ${
-        rateReference ? `ref. ${rateReference}` : rateAgeLabel(fx.rate.fetchedAt)
+        rateReference
+          ? `ref. ${rateReference}`
+          : rateAgeLabel(fx.rate.fetchedAt)
       }${fx.isStale ? ' (desatualizada)' : ''}`
     : null;
   const canToggleCurrency = fx.isAvailable || fx.error == null;
@@ -281,6 +302,7 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
             onIncrement={handleIncrement}
             onDecrement={handleDecrement}
             onRemove={handleRemoveRequest}
+            onEditPrice={handleEditPriceRequest}
           />
         )}
         ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
@@ -514,6 +536,69 @@ export function ListDetailScreen({ listId }: ListDetailScreenProps) {
               quantity: itemToRemove.quantity,
             });
             setItemToRemove(null);
+            setActionError(null);
+            await reload();
+          }}
+        />
+      ) : null}
+
+      {itemToEditPrice ? (
+        <PriceOverrideModal
+          item={itemToEditPrice}
+          onClose={() => setItemToEditPrice(null)}
+          onRequestRemove={() => {
+            setItemToClearOverride(itemToEditPrice);
+            setItemToEditPrice(null);
+          }}
+          onSubmit={async (priceUsdCents, note) => {
+            const previousPrice =
+              itemToEditPrice.currentPriceUsdCents ??
+              itemToEditPrice.entryPriceUsdCents;
+
+            await setItemPriceOverride({
+              itemId: itemToEditPrice.id,
+              priceUsdCents,
+              note,
+              now: Date.now(),
+            });
+
+            track('list item price overridden', {
+              list_id: detail.id,
+              finish: itemToEditPrice.finish,
+              had_override: itemToEditPrice.priceOverrideUsdCents != null,
+              has_note: note != null,
+              price_delta_cents:
+                previousPrice == null ? null : priceUsdCents - previousPrice,
+            });
+
+            setItemToEditPrice(null);
+            setActionError(null);
+            await reload();
+          }}
+        />
+      ) : null}
+
+      {itemToClearOverride ? (
+        <ConfirmDialog
+          title='Remover preço manual'
+          message={`Remover o preço manual de ${itemToClearOverride.quantity} ${
+            itemToClearOverride.quantity === 1 ? 'cópia' : 'cópias'
+          } de "${
+            itemToClearOverride.snapshot.printedName ??
+            itemToClearOverride.snapshot.name
+          }"? A observação será apagada e o item volta a usar a cotação da API.`}
+          confirmLabel='Remover'
+          destructive
+          onCancel={() => setItemToClearOverride(null)}
+          onConfirm={async () => {
+            await clearItemPriceOverride(itemToClearOverride.id);
+
+            track('list item price override cleared', {
+              list_id: detail.id,
+              finish: itemToClearOverride.finish,
+            });
+
+            setItemToClearOverride(null);
             setActionError(null);
             await reload();
           }}

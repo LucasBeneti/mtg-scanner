@@ -48,8 +48,12 @@ _Avoid_: preço do scan, preço de compra
 A cotação mais recente obtida para o Finish de um List item.
 _Avoid_: preço de hoje, preço de venda
 
+**Price override**:
+Um preço unitário definido manualmente pelo usuário para um List item, com observação opcional e data da última edição. Tem precedência sobre Current price e Entry price no Estimated value, mas não substitui o Current price no banco.
+_Avoid_: preço manual, preço corrigido, preço pago
+
 **Estimated value**:
-O valor de uma List calculado como `quantity × (Current price ?? Entry price)`.
+O valor de uma List calculado como `quantity × (Price override ?? Current price ?? Entry price)`.
 _Avoid_: valor da coleção
 
 **Last accessed**:

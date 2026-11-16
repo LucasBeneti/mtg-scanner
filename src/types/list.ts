@@ -45,6 +45,9 @@ export interface CardListItem {
   lastAddedAt: number;
   currentPriceUsdCents: number | null;
   priceUpdatedAt: number | null;
+  priceOverrideUsdCents: number | null;
+  priceOverrideNote: string | null;
+  priceOverrideUpdatedAt: number | null;
   createdAt: number;
 }
 

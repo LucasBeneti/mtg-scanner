@@ -11,6 +11,7 @@ import { useMoney } from '../../hooks/useMoney';
 import { getCardImageSourceFromUri } from '../../services/scryfall';
 import type { CardListItem } from '../../types/list';
 import { getFinishLabel } from '../../utils/finish';
+import { getEffectiveUnitPriceUsdCents } from '../../utils/listPrice';
 
 interface ListItemRowProps {
   item: CardListItem;
@@ -18,6 +19,7 @@ interface ListItemRowProps {
   onIncrement: (itemId: number) => void;
   onDecrement: (itemId: number) => void;
   onRemove: (itemId: number) => void;
+  onEditPrice: (itemId: number) => void;
 }
 
 export const ListItemRow = React.memo(function ListItemRow({
@@ -26,24 +28,31 @@ export const ListItemRow = React.memo(function ListItemRow({
   onIncrement,
   onDecrement,
   onRemove,
+  onEditPrice,
 }: ListItemRowProps) {
   const [imageFailed, setImageFailed] = useState(false);
   const { format, formatLineTotal } = useMoney();
   const imageSource = getCardImageSourceFromUri(item.snapshot.imageUriNormal);
+  const hasOverride = item.priceOverrideUsdCents != null;
   const currentPrice = item.currentPriceUsdCents;
   const entryPrice = item.entryPriceUsdCents;
-  const effectivePrice = currentPrice ?? entryPrice;
+  const effectivePrice = getEffectiveUnitPriceUsdCents(item);
   const displayName = item.snapshot.printedName ?? item.snapshot.name;
-  const priceLabel =
-    currentPrice != null
+  const priceLabel = hasOverride
+    ? `${format(item.priceOverrideUsdCents)} / un.`
+    : currentPrice != null
       ? `${format(currentPrice)} / un.`
       : entryPrice != null
         ? `${format(entryPrice)} / un. (entrada)`
         : 'Sem cotação';
   const lineTotalLabel = formatLineTotal(effectivePrice, item.quantity);
   const showEntryComparison =
-    currentPrice != null && entryPrice != null && currentPrice !== entryPrice;
-  const showNoCurrent = currentPrice == null && entryPrice != null;
+    !hasOverride &&
+    currentPrice != null &&
+    entryPrice != null &&
+    currentPrice !== entryPrice;
+  const showNoCurrent =
+    !hasOverride && currentPrice == null && entryPrice != null;
 
   return (
     <View style={[styles.card, isPending && styles.cardPending]}>
@@ -75,9 +84,40 @@ export const ListItemRow = React.memo(function ListItemRow({
                 {getFinishLabel(item.finish)}
               </Text>
             </View>
+
+            {hasOverride ? (
+              <View
+                style={styles.overrideBadge}
+                accessible
+                accessibilityLabel='Preço definido manualmente'
+              >
+                <Text style={styles.overrideBadgeText}>Manual</Text>
+              </View>
+            ) : null}
+
+            {item.priceOverrideNote ? (
+              <View
+                style={styles.noteBadge}
+                accessible
+                accessibilityLabel='Tem observação'
+              >
+                <Text style={styles.noteBadgeText}>obs.</Text>
+              </View>
+            ) : null}
           </View>
 
-          <Text style={styles.unitPrice}>{priceLabel}</Text>
+          <Pressable
+            style={styles.priceButton}
+            onPress={() => onEditPrice(item.id)}
+            accessibilityRole='button'
+            accessibilityLabel={`Editar preço de ${displayName}`}
+            hitSlop={6}
+          >
+            <Text style={styles.unitPrice} numberOfLines={1}>
+              {priceLabel}
+            </Text>
+            <Text style={styles.priceEditIcon}>✎</Text>
+          </Pressable>
 
           {showEntryComparison ? (
             <Text style={styles.entryPrice}>
@@ -212,11 +252,46 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
   },
+  overrideBadge: {
+    borderRadius: 6,
+    backgroundColor: 'rgba(251, 191, 36, 0.16)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  overrideBadgeText: {
+    color: '#FBBF24',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  noteBadge: {
+    borderRadius: 6,
+    backgroundColor: 'rgba(148, 163, 184, 0.16)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  noteBadgeText: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  priceButton: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+    paddingVertical: 2,
+  },
   unitPrice: {
     color: '#CBD5E1',
     fontSize: 11,
     fontWeight: '600',
-    marginTop: 3,
+    flexShrink: 1,
+  },
+  priceEditIcon: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '700',
   },
   entryPrice: {
     color: '#64748B',

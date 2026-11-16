@@ -11,6 +11,7 @@ export interface PriceRefreshResult {
   noPriceCount: number;
   notFoundCount: number;
   failedCount: number;
+  manualOverrideCount: number;
   refreshedAt: number | null;
 }
 
@@ -31,6 +32,7 @@ export async function refreshListPrices(
       noPriceCount: 0,
       notFoundCount: 0,
       failedCount: 0,
+      manualOverrideCount: 0,
       refreshedAt: null,
     };
   }
@@ -49,8 +51,13 @@ export async function refreshListPrices(
   let noPriceCount = 0;
   let notFoundCount = 0;
   let failedCount = 0;
+  let manualOverrideCount = 0;
 
   for (const item of items) {
+    if (item.priceOverrideUsdCents != null) {
+      manualOverrideCount += 1;
+    }
+
     const card = cardsById.get(item.cardId);
 
     if (card) {
@@ -94,6 +101,7 @@ export async function refreshListPrices(
     noPriceCount,
     notFoundCount,
     failedCount,
+    manualOverrideCount,
     refreshedAt,
   };
 }
@@ -125,6 +133,10 @@ export function formatPriceRefreshResult(result: PriceRefreshResult): string {
     parts.push(
       result.failedCount === 1 ? '1 falhou' : `${result.failedCount} falharam`,
     );
+  }
+
+  if (result.manualOverrideCount > 0) {
+    parts.push(`${result.manualOverrideCount} com preço manual`);
   }
 
   return parts.length > 0 ? parts.join(' • ') : 'Nenhum preço atualizado.';

@@ -1,10 +1,32 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-const LATEST_DATABASE_VERSION = 2;
+const LATEST_DATABASE_VERSION = 3;
 
 interface Migration {
   version: number;
   up: (db: SQLiteDatabase) => Promise<void>;
+}
+
+/**
+ * Adiciona uma coluna só se ela ainda não existir. Uma migration interrompida
+ * no meio (app morto no Android) não avança `user_version`, então o retry
+ * precisa ser idempotente para não falhar com "duplicate column name".
+ */
+async function addColumnIfMissing(
+  db: SQLiteDatabase,
+  table: string,
+  column: string,
+  definition: string,
+): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>(
+    `PRAGMA table_info(${table})`,
+  );
+
+  if (columns.some((existing) => existing.name === column)) {
+    return;
+  }
+
+  await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 const migrations: Migration[] = [
@@ -67,6 +89,26 @@ const migrations: Migration[] = [
           updated_at INTEGER NOT NULL
         );
       `);
+    },
+  },
+  {
+    version: 3,
+    up: async (db) => {
+      // Preço unitário corrigido manualmente pelo usuário, com data e nota.
+      // NULL significa "sem override": usa current_price ?? entry_price.
+      await addColumnIfMissing(
+        db,
+        'list_items',
+        'price_override_usd_cents',
+        'INTEGER',
+      );
+      await addColumnIfMissing(db, 'list_items', 'price_override_note', 'TEXT');
+      await addColumnIfMissing(
+        db,
+        'list_items',
+        'price_override_updated_at',
+        'INTEGER',
+      );
     },
   },
 ];

@@ -9,7 +9,13 @@ import type {
   ListSummary,
 } from '../types/list';
 import { buildCardSnapshot, getAvailableFinishes } from '../utils/cardSnapshot';
+import { getEffectiveUnitPriceUsdCents } from '../utils/listPrice';
 import { normalizeListName } from '../utils/listName';
+import {
+  InvalidPriceOverrideError,
+  MAX_PRICE_OVERRIDE_USD_CENTS,
+  normalizePriceOverrideNote,
+} from '../utils/priceOverride';
 
 export {
   InvalidListNameError,
@@ -57,6 +63,9 @@ interface ListItemRow {
   last_added_at: number;
   current_price_usd_cents: number | null;
   price_updated_at: number | null;
+  price_override_usd_cents: number | null;
+  price_override_note: string | null;
+  price_override_updated_at: number | null;
   created_at: number;
 }
 
@@ -64,6 +73,13 @@ export interface ListItemPriceUpdate {
   itemId: number;
   currentPriceUsdCents: number | null;
   priceUpdatedAt: number;
+}
+
+export interface SetItemPriceOverrideInput {
+  itemId: number;
+  priceUsdCents: number;
+  note: string | null;
+  now: number;
 }
 
 export interface ApplyListPriceRefreshInput {
@@ -84,6 +100,7 @@ const LIST_SUMMARY_SELECT = `
       COALESCE(
         SUM(
           li.quantity * COALESCE(
+            li.price_override_usd_cents,
             li.current_price_usd_cents,
             li.entry_price_usd_cents
           )
@@ -150,6 +167,9 @@ function mapListItemRow(row: ListItemRow): CardListItem {
     lastAddedAt: row.last_added_at,
     currentPriceUsdCents: row.current_price_usd_cents,
     priceUpdatedAt: row.price_updated_at,
+    priceOverrideUsdCents: row.price_override_usd_cents,
+    priceOverrideNote: row.price_override_note,
+    priceOverrideUpdatedAt: row.price_override_updated_at,
     createdAt: row.created_at,
   };
 }
@@ -160,7 +180,7 @@ function calculateListTotals(items: CardListItem[]): {
 } {
   return items.reduce(
     (totals, item) => {
-      const unitPrice = item.currentPriceUsdCents ?? item.entryPriceUsdCents;
+      const unitPrice = getEffectiveUnitPriceUsdCents(item);
       const value = unitPrice == null ? 0 : unitPrice * item.quantity;
 
       return {
@@ -504,7 +524,8 @@ export async function removeListItem(itemId: number): Promise<void> {
 
 /**
  * Aplica os preços atuais de uma atualização em lote sem tocar no
- * preço de entrada nem em last_added_at.
+ * preço de entrada nem em last_added_at. O preço manual (override), quando
+ * existe, não é alterado: ele vence o preço atual no cálculo do valor.
  */
 export async function applyListPriceRefresh({
   listId,
@@ -532,5 +553,91 @@ export async function applyListPriceRefresh({
         listId,
       );
     }
+  });
+}
+
+/**
+ * Grava o preço unitário manual de um item, junto da observação e da data.
+ * O preço da API (`current_price_usd_cents`) permanece intacto.
+ */
+export async function setItemPriceOverride({
+  itemId,
+  priceUsdCents,
+  note,
+  now,
+}: SetItemPriceOverrideInput): Promise<void> {
+  const normalizedPrice = Math.round(priceUsdCents);
+
+  if (!Number.isFinite(normalizedPrice) || normalizedPrice < 0) {
+    throw new InvalidPriceOverrideError('O preço não pode ser negativo.');
+  }
+
+  if (normalizedPrice > MAX_PRICE_OVERRIDE_USD_CENTS) {
+    throw new InvalidPriceOverrideError('Preço acima do limite permitido.');
+  }
+
+  const normalizedNote = normalizePriceOverrideNote(note ?? '');
+  const db = await getDatabase();
+
+  await db.withTransactionAsync(async () => {
+    const item = await db.getFirstAsync<{ list_id: number }>(
+      'SELECT list_id FROM list_items WHERE id = ?',
+      itemId,
+    );
+
+    if (!item) {
+      throw new ListItemNotFoundError(itemId);
+    }
+
+    await db.runAsync(
+      `UPDATE list_items
+       SET price_override_usd_cents = ?,
+           price_override_note = ?,
+           price_override_updated_at = ?
+       WHERE id = ?`,
+      normalizedPrice,
+      normalizedNote,
+      now,
+      itemId,
+    );
+
+    await db.runAsync(
+      'UPDATE lists SET last_accessed_at = ? WHERE id = ?',
+      now,
+      item.list_id,
+    );
+  });
+}
+
+/** Remove o preço manual (e a observação) e volta a usar a cotação da API. */
+export async function clearItemPriceOverride(itemId: number): Promise<void> {
+  const db = await getDatabase();
+
+  await db.withTransactionAsync(async () => {
+    const item = await db.getFirstAsync<{ list_id: number }>(
+      'SELECT list_id FROM list_items WHERE id = ?',
+      itemId,
+    );
+
+    if (!item) {
+      throw new ListItemNotFoundError(itemId);
+    }
+
+    const now = Date.now();
+
+    await db.runAsync(
+      `UPDATE list_items
+       SET price_override_usd_cents = NULL,
+           price_override_note = NULL,
+           price_override_updated_at = NULL
+       WHERE id = ?`,
+      itemId,
+    );
+
+    await db.runAsync(
+      'UPDATE lists SET last_accessed_at = ? WHERE id = ?',
+      now,
+      item.list_id,
+    );
   });
 }
